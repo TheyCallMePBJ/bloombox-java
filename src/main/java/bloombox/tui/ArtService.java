@@ -44,7 +44,10 @@ final class ArtService implements AutoCloseable {
 
     private static final int MAX_PX = 512;
     private static final List<String> NAMES = List.of("cover", "folder", "front", "album", "albumart", "art");
-    private static final AtomicInteger IDS = new AtomicInteger(1);
+    // kitty image ids are shared by everything in the terminal window: start at a random
+    // offset (< 2^24, so the id fits in the placeholder's RGB foreground colour)
+    private static final AtomicInteger IDS =
+            new AtomicInteger(0x10000 + new java.util.Random().nextInt(0xE00000));
 
     private final Path dir;
     private final Runnable onReady;
