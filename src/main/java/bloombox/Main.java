@@ -16,6 +16,7 @@ import bloombox.library.Track;
 import bloombox.mpris.MprisService;
 import bloombox.player.MpvPlayer;
 import bloombox.player.PlaybackController;
+import bloombox.tui.BloomboxTui;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,6 +31,7 @@ public final class Main {
             bloombox 0.1.0
 
             usage:
+              bloombox                            start the terminal UI
               bloombox scan [DIR]                 scan library (DIR is saved as the default)
               bloombox search [OPTIONS] QUERY...  search the library and explain the work done
                   --no-bloom   baseline: KMP every lyric track (no Bloom screening)
@@ -47,6 +49,11 @@ public final class Main {
             """;
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 0 && System.console() != null) {
+            new BloomboxTui(Settings.load()).run();
+            System.exit(0); // daemon helpers (dbus, executors) must not keep the JVM alive
+            return;
+        }
         if (args.length == 0 || args[0].equals("-h") || args[0].equals("--help")) {
             System.out.print(USAGE);
             return;
