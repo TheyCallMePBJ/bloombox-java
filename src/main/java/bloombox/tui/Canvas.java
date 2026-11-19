@@ -83,6 +83,35 @@ final class Canvas {
         return TerminalTextUtils.fitString(s, max - 1) + "…";
     }
 
+    /** Greedy word wrap to {@code w} columns; words longer than a line are hard-split. Never empty. */
+    static java.util.List<String> wrap(String s, int w) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (w <= 0) return out;
+        StringBuilder line = new StringBuilder();
+        for (String word : s.strip().split("\\s+")) {
+            while (width(word) > w) { // hard-split very long words
+                if (line.length() > 0) {
+                    out.add(line.toString());
+                    line.setLength(0);
+                }
+                String head = TerminalTextUtils.fitString(word, w);
+                if (head.isEmpty()) head = word.substring(0, word.offsetByCodePoints(0, 1));
+                out.add(head);
+                word = word.substring(head.length());
+            }
+            if (word.isEmpty()) continue;
+            if (line.length() == 0) line.append(word);
+            else if (width(line.toString()) + 1 + width(word) <= w) line.append(' ').append(word);
+            else {
+                out.add(line.toString());
+                line.setLength(0);
+                line.append(word);
+            }
+        }
+        if (line.length() > 0 || out.isEmpty()) out.add(line.toString());
+        return out;
+    }
+
     /** Pads/truncates to exactly {@code w} columns. */
     static String pad(String s, int w) {
         String f = fit(s, w);

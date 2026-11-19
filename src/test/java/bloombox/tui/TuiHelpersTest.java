@@ -93,4 +93,41 @@ class TuiHelpersTest {
         assertNull(CavaVisualizer.parse(""));
         assertNull(CavaVisualizer.parse("1;x;3;"));
     }
+
+    @Test
+    void wrapBreaksOnWordsWithinWidth() {
+        var rows = Canvas.wrap("the quick brown fox jumps over the lazy dog", 10);
+        assertEquals(java.util.List.of("the quick", "brown fox", "jumps over", "the lazy", "dog"), rows);
+        for (String r : rows) assertTrue(Canvas.width(r) <= 10);
+    }
+
+    @Test
+    void wrapEdgeCases() {
+        assertEquals(java.util.List.of(""), Canvas.wrap("   ", 10), "blank input gives one empty row");
+        assertEquals(java.util.List.of("abcd", "efgh", "ij"), Canvas.wrap("abcdefghij", 4), "long words are hard-split");
+        assertEquals(java.util.List.of("日本", "語"), Canvas.wrap("日本語", 4), "double-width characters count as 2");
+        assertTrue(Canvas.wrap("x", 0).isEmpty());
+    }
+
+    @Test
+    void waveformResampleKeepsShapeAndRange() {
+        float[] env = new float[1024];
+        for (int i = 512; i < 1024; i++) env[i] = 1f;
+        double[] v = Waveform.resample(env, 8);
+        assertEquals(8, v.length);
+        assertEquals(0.0, v[0], 1e-9);
+        assertEquals(1.0, v[7], 1e-9);
+        for (double d : v) assertTrue(d >= 0 && d <= 1);
+        assertArrayEquals(new double[4], Waveform.resample(null, 4), "no envelope yet → flat");
+    }
+
+    @Test
+    void kittyDiacriticTableIsComplete() {
+        assertEquals(297, KittyDiacritics.CODEPOINTS.length);
+        assertEquals(0x0305, KittyDiacritics.CODEPOINTS[0]);
+        assertEquals(0x030D, KittyDiacritics.CODEPOINTS[1]);
+        for (int cp : KittyDiacritics.CODEPOINTS) {
+            assertEquals(Character.NON_SPACING_MARK, Character.getType(cp), Integer.toHexString(cp));
+        }
+    }
 }

@@ -26,7 +26,6 @@ import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.screen.TerminalScreen;
-import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.MouseCaptureMode;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.ansi.UnixLikeTerminal;
@@ -123,11 +122,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
             mpris = null;
         }
 
-        Terminal terminal = new DefaultTerminalFactory()
-                .setForceTextTerminal(true)
-                .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE)
-                .setUnixTerminalCtrlCBehaviour(UnixLikeTerminal.CtrlCBehaviour.TRAP)
-                .createTerminal();
+        Utf8UnixTerminal terminal = new Utf8UnixTerminal(System.in, System.out, UnixLikeTerminal.CtrlCBehaviour.TRAP);
+        terminal.setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE);
         screen = new TerminalScreen(terminal);
         Thread restore = new Thread(this::shutdown, "bloombox-shutdown");
         Runtime.getRuntime().addShutdownHook(restore);
@@ -160,7 +156,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
             settings.save();
         } catch (Exception ignored) { }
         if (cava != null) cava.close();
-        if (kitty != null) kitty.clearAll();
+        if (kitty != null) kitty.close();
         try { if (screen != null) screen.stopScreen(); } catch (Exception ignored) { }
         if (mpris != null) mpris.close();
         if (mpv != null) mpv.close();
@@ -189,7 +185,6 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 dirty = false;
                 render();
                 screen.refresh(full ? Screen.RefreshType.COMPLETE : Screen.RefreshType.DELTA);
-                if (kitty != null) kitty.flush(full);
                 lastFrame = now;
             }
             try {
@@ -538,6 +533,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private static final String[] ART_MODES = {"auto", "kitty", "blocks", "off"};
     private static final String[] VIZ_MODES = {"cava", "off"};
+    private static final int SETTINGS_ROWS = 5;
 
     private void openSettings() {
         overlay = Overlay.SETTINGS;
@@ -569,15 +565,15 @@ public final class BloomboxTui implements PlaybackController.Listener {
         }
         switch (t) {
             case Escape -> overlay = Overlay.NONE;
-            case ArrowUp -> settingsRow = (settingsRow + 3) % 4;
-            case ArrowDown, Tab -> settingsRow = (settingsRow + 1) % 4;
+            case ArrowUp -> settingsRow = (settingsRow + SETTINGS_ROWS - 1) % SETTINGS_ROWS;
+            case ArrowDown, Tab -> settingsRow = (settingsRow + 1) % SETTINGS_ROWS;
             case Enter, ArrowLeft, ArrowRight -> activateSetting(t == KeyType.ArrowLeft ? -1 : 1);
             case Character -> {
                 char c = k.getCharacter();
                 if (c == 'q' || c == 'o') overlay = Overlay.NONE;
                 else if (c == ' ') activateSetting(1);
-                else if (c == 'k') settingsRow = (settingsRow + 3) % 4;
-                else if (c == 'j') settingsRow = (settingsRow + 1) % 4;
+                else if (c == 'k') settingsRow = (settingsRow + SETTINGS_ROWS - 1) % SETTINGS_ROWS;
+                else if (c == 'j') settingsRow = (settingsRow + 1) % SETTINGS_ROWS;
             }
             default -> { }
         }
@@ -592,7 +588,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
             case 1 -> {
                 settings.set(Settings.ART_MODE, cycle(ART_MODES, settings.get(Settings.ART_MODE, "auto"), dir));
                 saveSettings();
-                if (kitty != null) kitty.clearAll();
+                if (kitty != null) kitty.close();
                 kitty = KittyImages.detect(settings.get(Settings.ART_MODE, "auto"));
             }
             case 2 -> {
@@ -600,7 +596,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 saveSettings();
                 startVisualizer();
             }
-            case 3 -> settings.musicDir().ifPresentOrElse(d -> {
+            case 3 -> {
+                settings.set(Settings.SEEKBAR, cycle(Waveform.STYLES, settings.get(Settings.SEEKBAR, "wave"), dir));
+                saveSettings();
+            }
+            case 4 -> settings.musicDir().ifPresentOrElse(d -> {
                 startScan(d);
                 overlay = Overlay.NONE;
             }, () -> flash("Set a music folder first", Theme.WARN));
@@ -671,7 +671,6 @@ public final class BloomboxTui implements PlaybackController.Listener {
         Canvas cv = new Canvas(screen.newTextGraphics(), w, h);
         cv.fill(0, 0, w, h, Theme.BG);
         if (w < MIN_W || h < MIN_H) {
-            if (kitty != null) kitty.hide();
             cv.text(1, h / 2, "terminal too small (" + w + "×" + h + ", need " + MIN_W + "×" + MIN_H + ")",
                     w - 2, Theme.DIM, Theme.BG);
             return;
@@ -683,12 +682,10 @@ public final class BloomboxTui implements PlaybackController.Listener {
         drawTopBar(cv, w);
         drawLeft(cv, 0, mainY, leftW, mainH);
         if (rightW > 0) drawRight(cv, leftW, mainY, rightW, mainH);
-        else if (kitty != null) kitty.hide();
         drawBottom(cv, h - bottomH, w);
 
         if (overlay == Overlay.HELP) drawHelp(cv, w, h);
         if (overlay == Overlay.SETTINGS) drawSettings(cv, w, h);
-        if (overlay != Overlay.NONE && kitty != null) kitty.hide(); // images would cover the overlay
     }
 
     private void drawTopBar(Canvas cv, int w) {
@@ -956,7 +953,6 @@ public final class BloomboxTui implements PlaybackController.Listener {
         ArtService.Art a = t == null ? null : art.get(t);
         String mode = settings.get(Settings.ART_MODE, "auto");
         if (a == null || "off".equals(mode)) {
-            if (kitty != null) kitty.hide();
             // placeholder: soft gradient square with a flower
             for (int j = 0; j < h; j++) {
                 TextColor row = Theme.mix(Theme.STRIPE, Theme.SELECT, j / (double) Math.max(1, h - 1));
@@ -967,10 +963,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
             return;
         }
         if (kitty != null && kitty.enabled()) {
-            cv.fill(x, y, w, h, Theme.PANEL);
-            kitty.show(a, x, y, w, h);
+            kitty.draw(cv, a, x, y, w, h);
         } else {
-            if (kitty != null) kitty.hide();
             HalfBlock.draw(cv, a.image(), x, y, w, h);
         }
     }
@@ -980,26 +974,64 @@ public final class BloomboxTui implements PlaybackController.Listener {
         Visualizer.draw(cv, bars, x, y, w, h, ctl.status() == PlaybackController.Status.PLAYING);
     }
 
+    /** Lyric lines word-wrapped to the pane width; cached per (library, track, width). */
+    private record WrappedLyrics(Library lib, int trackId, int width, List<String> rows, int[] lineOfRow, int[] firstRow) {}
+
+    private WrappedLyrics wrapped;
+
+    private WrappedLyrics wrapLyrics(Track t, Lyrics ly, int w) {
+        WrappedLyrics c = wrapped;
+        if (c != null && c.lib() == library && c.trackId() == t.id() && c.width() == w) return c;
+        List<String> rows = new ArrayList<>();
+        List<Integer> owner = new ArrayList<>();
+        int[] firstRow = new int[ly.lines().size()];
+        for (int i = 0; i < ly.lines().size(); i++) {
+            firstRow[i] = rows.size();
+            String text = ly.lines().get(i).text();
+            for (String part : Canvas.wrap(text.isEmpty() ? "♪" : text, w)) {
+                rows.add(part);
+                owner.add(i);
+            }
+        }
+        wrapped = new WrappedLyrics(library, t.id(), w, rows, owner.stream().mapToInt(Integer::intValue).toArray(), firstRow);
+        return wrapped;
+    }
+
     private void drawLyrics(Canvas cv, Track t, int x, int y, int w, int h) {
         Lyrics ly = t == null ? Lyrics.EMPTY : library.lyrics(t.id());
         if (ly.isEmpty()) {
-            if (t != null) cv.text(x, y + h / 2, "no lyrics", w, Theme.FAINT, Theme.PANEL);
+            if (t != null) cv.text(x + Math.max(0, (w - 9) / 2), y + h / 2, "no lyrics", w, Theme.FAINT, Theme.PANEL);
             return;
         }
-        List<LyricLine> lines = ly.lines();
-        int cur = ly.indexAt((long) (ctl.position() * 1000));
-        int center = y + h / 2;
-        int first = ly.synced() ? Math.max(0, cur) - h / 2 : 0;
+        WrappedLyrics wl = wrapLyrics(t, ly, w);
+        int total = wl.rows().size();
+        int cur = -1, top;
+        if (ly.synced()) {
+            // keep the active line's block vertically centred
+            cur = ly.indexAt((long) (ctl.position() * 1000));
+            int line = Math.max(0, cur);
+            int start = wl.firstRow()[line];
+            int end = line + 1 < wl.firstRow().length ? wl.firstRow()[line + 1] : total;
+            top = start + (end - start) / 2 - h / 2;
+        } else if (total <= h) {
+            top = -(h - total) / 2; // short text: centre it
+        } else {
+            // no timestamps: scroll through the text in step with playback progress
+            double d = ctl.duration();
+            double frac = d > 0 ? Math.max(0, Math.min(1, ctl.position() / d)) : 0;
+            top = (int) Math.round(frac * (total - h));
+        }
         for (int r = 0; r < h; r++) {
-            int i = ly.synced() ? Math.max(0, cur) - (center - y) + r : first + r;
-            if (i < 0 || i >= lines.size()) continue;
-            String text = lines.get(i).text().isEmpty() ? "♪" : lines.get(i).text();
-            boolean active = ly.synced() && i == cur;
-            int dist = Math.abs(i - Math.max(0, cur));
-            TextColor fg = active ? Theme.ACCENT
-                    : ly.synced() ? Theme.mix(Theme.DIM, Theme.FAINT, Math.min(1, dist / 6.0)) : Theme.DIM;
-            int tw = Canvas.width(Canvas.fit(text, w));
-            int tx = x + Math.max(0, (w - tw) / 2);
+            int row = top + r;
+            if (row < 0 || row >= total) continue;
+            String text = wl.rows().get(row);
+            int line = wl.lineOfRow()[row];
+            boolean active = ly.synced() && line == cur;
+            TextColor fg;
+            if (!ly.synced()) fg = Theme.mix(Theme.DIM, Theme.TEXT, 0.45);
+            else if (active) fg = Theme.ACCENT;
+            else fg = Theme.mix(Theme.DIM, Theme.FAINT, Math.min(1, Math.abs(line - Math.max(0, cur)) / 6.0));
+            int tx = x + Math.max(0, (w - Canvas.width(text)) / 2);
             cv.text(tx, y + r, text, w, fg, Theme.PANEL, active ? new SGR[]{SGR.BOLD} : new SGR[0]);
         }
     }
@@ -1013,7 +1045,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         double pos = ctl.position(), dur = ctl.duration();
         double frac = dur > 0 ? Math.max(0, Math.min(1, pos / dur)) : 0;
         float[] peaks = t == null ? null : waveforms.peaks(t.path());
-        Waveform.draw(cv, peaks, 1, y, w - 2, 2, frac, t != null);
+        Waveform.draw(cv, peaks, 1, y, w - 2, 2, frac, t != null, settings.get(Settings.SEEKBAR, "wave"));
 
         int sy = y + 2;
         PlaybackController.Status st = ctl.status();
@@ -1072,7 +1104,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
     }
 
     private void drawSettings(Canvas cv, int w, int h) {
-        int bw = Math.min(w - 4, 80), bh = 13;
+        int bw = Math.min(w - 4, 80), bh = 15;
         int bx = (w - bw) / 2, by = Math.max(1, (h - bh) / 2);
         cv.box(bx, by, bw, bh, "Settings", Theme.ACCENT_DIM, Theme.PANEL);
         String dir = settings.musicDir().map(Path::toString).orElse("(not set)");
@@ -1081,6 +1113,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Album art", settings.get(Settings.ART_MODE, "auto") + artDetail()},
                 {"Visualizer", settings.get(Settings.VISUALIZER, "cava")
                         + (LibraryLoader.onPath("cava") ? "" : "  (cava not installed)")},
+                {"Seek bar", settings.get(Settings.SEEKBAR, "wave")},
                 {"Rescan library", scanProgress != null ? scanProgress : "press Enter"},
         };
         for (int i = 0; i < rows.length; i++) {
@@ -1099,7 +1132,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 cv.ch(vx + Math.min(vw - 1, Canvas.width(visible)), y, ' ', Theme.BG, Theme.ACCENT);
                 if (shown < 0) return;
             } else {
-                cv.text(vx, y, rows[i][1], vw, i == 1 || i == 2 ? Theme.ACCENT2 : Theme.DIM, bg);
+                cv.text(vx, y, rows[i][1], vw, i >= 1 && i <= 3 ? Theme.ACCENT2 : Theme.DIM, bg);
             }
         }
         String hint = settingsEditing ? "Enter save & scan · Esc cancel · Ctrl+U clear"
@@ -1109,7 +1142,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private String artDetail() {
         return switch (settings.get(Settings.ART_MODE, "auto")) {
-            case "auto" -> kitty != null && kitty.enabled() ? "  (using kitty graphics)" : "  (using half-blocks)";
+            case "auto", "kitty" -> kitty == null ? "" : kitty.enabled() ? "  (" + kitty.reason() + ")"
+                    : "  (half-blocks: " + kitty.reason() + ")";
             default -> "";
         };
     }

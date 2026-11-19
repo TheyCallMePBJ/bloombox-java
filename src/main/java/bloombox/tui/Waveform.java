@@ -3,39 +3,100 @@ package bloombox.tui;
 import com.googlecode.lanterna.TextColor;
 
 /**
- * Two-row mirrored waveform seek bar. Each column has 8 sub-levels per half:
- * the top row grows upward with lower-block glyphs; the bottom row grows downward
- * by drawing the complementary lower block in the background colour over a
- * coloured cell (terminals have no "upper 3/8 block" glyphs).
+ * The seek bar. Styles:
+ * <ul>
+ *   <li>{@code wave} (default): a fine mirrored waveform drawn with braille dots: each cell
+ *       holds 2 sample columns × 4 dot rows; over two rows that gives 4 dots above and 4 below
+ *       a centre line, which stays visible through silence.</li>
+ *   <li>{@code bars}: solid mirrored block glyphs (heavier look).</li>
+ *   <li>{@code line}: a plain progress line with a playhead.</li>
+ * </ul>
  */
 final class Waveform {
     private Waveform() {}
 
-    private static final char[] LOWER = {' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'};
+    static final String[] STYLES = {"wave", "bars", "line"};
 
-    static void draw(Canvas cv, float[] env, int x, int y, int w, int h, double played, boolean active) {
+    private static final char[] LOWER = {' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'};
+    /** Braille dot bits for (column, row): rows 0..3 top to bottom. */
+    private static final int[][] DOT = {{0x01, 0x02, 0x04, 0x40}, {0x08, 0x10, 0x20, 0x80}};
+
+    static void draw(Canvas cv, float[] env, int x, int y, int w, int h, double played, boolean active, String style) {
         if (w <= 0) return;
+        switch (style == null ? "wave" : style) {
+            case "bars" -> bars(cv, env, x, y, w, h, played, active);
+            case "line" -> line(cv, x, y + h - 1, w, played, active);
+            default -> braille(cv, env, x, y, w, h, played, active);
+        }
+    }
+
+    private static TextColor colour(int c, int head, boolean active) {
+        if (!active) return Theme.BORDER;
+        if (c == head) return Theme.TEXT;
+        return c < head ? Theme.ACCENT : Theme.mix(Theme.BORDER, Theme.ACCENT_DIM, 0.45);
+    }
+
+    /** Envelope resampled to {@code n} points (bucket mean) with a light 3-tap smoothing. */
+    static double[] resample(float[] env, int n) {
+        double[] out = new double[n];
+        if (env == null || env.length == 0) return out;
+        for (int i = 0; i < n; i++) {
+            int from = (int) ((long) i * env.length / n);
+            int to = Math.max(from + 1, (int) ((long) (i + 1) * env.length / n));
+            double sum = 0;
+            int cnt = 0;
+            for (int j = from; j < to && j < env.length; j++) {
+                sum += env[j];
+                cnt++;
+            }
+            out[i] = cnt == 0 ? 0 : sum / cnt;
+        }
+        double[] smooth = new double[n];
+        for (int i = 0; i < n; i++) {
+            double a = out[Math.max(0, i - 1)], b = out[i], c = out[Math.min(n - 1, i + 1)];
+            smooth[i] = 0.25 * a + 0.5 * b + 0.25 * c;
+        }
+        return smooth;
+    }
+
+    private static void braille(Canvas cv, float[] env, int x, int y, int w, int h, double played, boolean active) {
+        double[] v = resample(env, w * 2);
         int head = (int) Math.round(played * (w - 1));
         for (int c = 0; c < w; c++) {
-            double v;
-            if (env == null || env.length == 0) {
-                v = active ? 0.12 : 0.06;
-            } else {
-                int from = (int) ((long) c * env.length / w);
-                int to = Math.max(from + 1, (int) ((long) (c + 1) * env.length / w));
-                float m = 0;
-                for (int i = from; i < to && i < env.length; i++) m = Math.max(m, env[i]);
-                v = m;
+            int top = 0, bottom = 0;
+            for (int sub = 0; sub < 2; sub++) {
+                int k = env == null ? 1 : Math.max(1, Math.min(4, (int) Math.round(v[c * 2 + sub] * 4)));
+                for (int d = 0; d < k; d++) {
+                    top |= DOT[sub][3 - d];   // grows upward from the bottom of the top cell
+                    bottom |= DOT[sub][d];    // grows downward from the top of the bottom cell
+                }
             }
-            int level = Math.max(1, (int) Math.round(v * 8)); // 1..8 per half
-            TextColor col = !active ? Theme.BORDER
-                    : c == head ? Theme.TEXT
-                    : c < head ? Theme.ACCENT
-                    : Theme.mix(Theme.BORDER, Theme.ACCENT_DIM, 0.35);
-            // top half: grows up from the middle
+            TextColor col = colour(c, head, active);
+            if (h > 1) {
+                cv.ch(x + c, y, (char) (0x2800 + top), col, Theme.BAR);
+                cv.ch(x + c, y + 1, (char) (0x2800 + bottom), col, Theme.BAR);
+            } else {
+                cv.ch(x + c, y, (char) (0x2800 + (top | bottom)), col, Theme.BAR);
+            }
+        }
+    }
+
+    private static void bars(Canvas cv, float[] env, int x, int y, int w, int h, double played, boolean active) {
+        double[] v = resample(env, w);
+        int head = (int) Math.round(played * (w - 1));
+        for (int c = 0; c < w; c++) {
+            int level = env == null ? 1 : Math.max(1, (int) Math.round(v[c] * 8));
+            TextColor col = colour(c, head, active);
             cv.ch(x + c, y, LOWER[level], col, Theme.BAR);
-            // bottom half: coloured cell with the uncovered lower part painted back in BAR colour
             if (h > 1) cv.ch(x + c, y + 1, LOWER[8 - level], Theme.BAR, col);
+        }
+    }
+
+    private static void line(Canvas cv, int x, int y, int w, double played, boolean active) {
+        int head = (int) Math.round(played * (w - 1));
+        for (int c = 0; c < w; c++) {
+            if (active && c == head) cv.ch(x + c, y, '●', Theme.TEXT, Theme.BAR);
+            else cv.ch(x + c, y, c < head && active ? '━' : '─', colour(c, head, active), Theme.BAR);
         }
     }
 }
