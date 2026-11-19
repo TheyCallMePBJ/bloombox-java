@@ -255,7 +255,7 @@ public final class Main {
         if (!Files.isRegularFile(file) || Track.formatOf(file) == null) {
             fail("not a supported audio file (flac/mp3/ogg/opus): " + file);
         }
-        Path lrc = Track.findLrc(file);
+        Path lrc = Track.findLyricsFile(file);
         Lyrics lyrics = lrc != null ? LrcParser.parse(lrc) : Lyrics.EMPTY;
         System.out.printf("lyrics: %d lines (%s)%n", lyrics.lines().size(), lyrics.synced() ? "synced" : "unsynced");
 

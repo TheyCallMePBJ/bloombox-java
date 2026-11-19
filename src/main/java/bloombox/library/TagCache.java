@@ -24,7 +24,7 @@ import java.util.Map;
 public final class TagCache {
 
     private static final int MAGIC = 0x42425843; // "BBXC"
-    private static final int VERSION = 1;
+    private static final int VERSION = 2; // v2: embedded lyrics
 
     record Entry(long size, long mtime, TagReader.Tags tags) {}
 
@@ -51,7 +51,7 @@ public final class TagCache {
                 long mtime = in.readLong();
                 TagReader.Tags t = new TagReader.Tags(in.readUTF(), in.readUTF(), in.readUTF(),
                         in.readInt(), in.readInt(), in.readLong(),
-                        TagReader.Source.values()[in.readByte()]);
+                        TagReader.Source.values()[in.readByte()], readLongString(in));
                 m.put(path, new Entry(size, mtime, t));
             }
             return new TagCache(m);
@@ -79,6 +79,7 @@ public final class TagCache {
                 out.writeInt(t.discNo());
                 out.writeLong(t.durationMs());
                 out.writeByte(t.source().ordinal());
+                writeLongString(out, t.lyrics());
             }
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -108,6 +109,19 @@ public final class TagCache {
 
     public int size() {
         return entries.size();
+    }
+
+    /** Length-prefixed UTF-8, for values that may exceed writeUTF's 64 KiB limit. */
+    private static void writeLongString(DataOutputStream out, String s) throws IOException {
+        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        out.writeInt(b.length);
+        out.write(b);
+    }
+
+    private static String readLongString(DataInputStream in) throws IOException {
+        int n = in.readInt();
+        if (n < 0 || n > (8 << 20)) throw new IOException("corrupt cache entry");
+        return new String(in.readNBytes(n), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /** writeUTF is limited to 65535 encoded bytes; tags that long are junk anyway. */

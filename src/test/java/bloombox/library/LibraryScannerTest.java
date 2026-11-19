@@ -53,6 +53,25 @@ class LibraryScannerTest {
     }
 
     @Test
+    void plainTextLyricsFileIsUsedWhenNoLrcExists() throws IOException {
+        junk("A/Artist - Plain.flac");
+        Files.writeString(dir.resolve("A/Artist - Plain.txt"), "first verse line\nsecond verse line\n");
+        junk("A/Artist - Both.flac");
+        Files.writeString(dir.resolve("A/Artist - Both.lrc"), "[00:02.00]synced wins");
+        Files.writeString(dir.resolve("A/Artist - Both.txt"), "plain loses");
+
+        Library lib = scanner(null).scan(dir, null);
+        Track plain = lib.tracks().stream().filter(t -> t.title().equals("Plain")).findFirst().orElseThrow();
+        Track both = lib.tracks().stream().filter(t -> t.title().equals("Both")).findFirst().orElseThrow();
+        assertFalse(lib.lyrics(plain.id()).synced());
+        assertEquals(2, lib.lyrics(plain.id()).lines().size());
+        assertTrue(plain.lyricsPath().toString().endsWith(".txt"));
+        assertTrue(lib.lyrics(both.id()).synced());
+        assertEquals("synced wins", lib.lyrics(both.id()).lines().get(0).text());
+        assertEquals(2, lib.report().withLyrics());
+    }
+
+    @Test
     void symlinkToSameFileIsCountedOnce() throws IOException {
         Path real = junk("a/x.flac");
         Files.createDirectories(dir.resolve("b"));

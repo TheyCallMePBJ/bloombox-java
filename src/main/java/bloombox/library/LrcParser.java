@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
  *   <li>{@code [offset:+/-ms]} — positive values make lyrics appear earlier.</li>
  *   <li>Enhanced/word-level tags {@code <mm:ss.xx>} (stripped from the text).</li>
  *   <li>Files without any timestamps are treated as plain, unsynced lyrics.</li>
+ *   <li>Files whose timestamps are all identical are also treated as unsynced.</li>
  *   <li>UTF-8 (with or without BOM), falling back to ISO-8859-1 for legacy files.</li>
  * </ul>
  * Malformed lines are skipped rather than failing the whole file.
@@ -98,6 +99,13 @@ public final class LrcParser {
         }
         // Stable sort keeps file order for lines that share a timestamp.
         lines.sort((a, b) -> Long.compare(a.timeMs(), b.timeMs()));
+        // Degenerate "synced" files (every line at the same time, e.g. all [00:00.00]) carry
+        // no timing information: show them as plain text instead of one frozen line.
+        if (lines.size() > 1 && lines.get(0).timeMs() == lines.get(lines.size() - 1).timeMs()) {
+            List<LyricLine> plainLines = new ArrayList<>(lines.size());
+            for (LyricLine l : lines) plainLines.add(new LyricLine(LyricLine.UNSYNCED, l.text()));
+            return new Lyrics(plainLines, false, meta);
+        }
         return new Lyrics(lines, true, meta);
     }
 

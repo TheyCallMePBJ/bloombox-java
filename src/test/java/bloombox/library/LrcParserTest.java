@@ -120,4 +120,18 @@ class LrcParserTest {
         assertEquals(1, l.indexAt(3000));
         assertEquals(2, l.indexAt(999_999)); // past the end
     }
+
+    @Test
+    void identicalTimestampsAreTreatedAsUnsynced() {
+        Lyrics l = LrcParser.parse("[00:00.00]first line\n[00:00.00]second line\n[00:00.00]third\n");
+        assertFalse(l.synced());
+        assertEquals(3, l.lines().size());
+        assertEquals("second line", l.lines().get(1).text());
+        assertEquals(-1, l.indexAt(5000));
+    }
+
+    @Test
+    void singleTimedLineStaysSynced() {
+        assertTrue(LrcParser.parse("[00:05.00]only\n").synced());
+    }
 }

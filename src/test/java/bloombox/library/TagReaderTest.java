@@ -53,4 +53,12 @@ class TagReaderTest {
         TagReader.Tags t = new TagReader(false).read(Path.of("/definitely/not/here/Title.mp3"));
         assertEquals("Title", t.title());
     }
+
+    @Test
+    void embeddedLyricsKeyVariants() {
+        assertEquals("a", TagReader.embeddedLyrics(java.util.Map.of("lyrics", "a")));
+        assertEquals("b", TagReader.embeddedLyrics(java.util.Map.of("unsyncedlyrics", "b")));
+        assertEquals("c", TagReader.embeddedLyrics(java.util.Map.of("lyrics-eng", "c")));
+        assertEquals("", TagReader.embeddedLyrics(java.util.Map.of("title", "x", "lyrics", "  ")));
+    }
 }

@@ -130,18 +130,23 @@ public final class LibraryScanner {
                             }
                         }
                     }
-                    Path lrc = Track.findLrc(f);
+                    // lyrics source order: .lrc → .txt → lyrics embedded in the audio file's tags
+                    Path lrc = Track.findLyricsFile(f);
                     Lyrics lyrics = Lyrics.EMPTY;
                     if (lrc != null) {
                         try {
                             lyrics = LrcParser.parse(lrc);
-                            if (!lyrics.isEmpty()) withLyrics.incrementAndGet();
                         } catch (IOException e) {
                             lyricErrors.incrementAndGet();
                             warn(warnings, "unreadable lyrics " + lrc + ": " + e.getMessage());
-                            lrc = null;
                         }
                     }
+                    if (lyrics.isEmpty() && !tags.lyrics().isBlank()) {
+                        lyrics = LrcParser.parse(tags.lyrics());
+                        lrc = f;
+                    }
+                    if (lyrics.isEmpty()) lrc = null;
+                    else withLyrics.incrementAndGet();
                     Track t = new Track(-1, f, tags.title(), tags.artist(), tags.album(),
                             tags.trackNo(), tags.discNo(), tags.durationMs(), lrc);
                     return new Scanned(t, lyrics);

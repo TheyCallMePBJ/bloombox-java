@@ -33,8 +33,13 @@ public final class TagReader {
     /** Which step produced the metadata, reported in the scan summary. */
     public enum Source { TAGS, FFPROBE, FILENAME }
 
+    /** {@code lyrics} is embedded lyrics text (plain or LRC-formatted), or "" if none. */
     public record Tags(String title, String artist, String album, int trackNo, int discNo,
-                       long durationMs, Source source) {}
+                       long durationMs, Source source, String lyrics) {
+        public Tags {
+            lyrics = lyrics == null ? "" : lyrics;
+        }
+    }
 
     // Strong reference so the level isn't lost when the logger is GC'd.
     private static final Logger JAT_LOG = Logger.getLogger("org.jaudiotagger");
@@ -64,7 +69,8 @@ public final class TagReader {
                 t.trackNo != 0 ? t.trackNo : guess.trackNo,
                 t.discNo,
                 t.durationMs,
-                t.source);
+                t.source,
+                t.lyrics);
     }
 
     private static Tags viaJaudiotagger(Path file) {
@@ -73,7 +79,7 @@ public final class TagReader {
             AudioHeader h = af.getAudioHeader();
             long dur = h == null ? 0 : Math.round(h.getPreciseTrackLength() * 1000);
             Tag tag = af.getTag();
-            if (tag == null) return new Tags("", "", "", 0, 0, dur, Source.TAGS);
+            if (tag == null) return new Tags("", "", "", 0, 0, dur, Source.TAGS, "");
             return new Tags(
                     first(tag, FieldKey.TITLE),
                     first(tag, FieldKey.ARTIST).isBlank() ? first(tag, FieldKey.ALBUM_ARTIST) : first(tag, FieldKey.ARTIST),
@@ -81,7 +87,8 @@ public final class TagReader {
                     leadingInt(first(tag, FieldKey.TRACK)),
                     leadingInt(first(tag, FieldKey.DISC_NO)),
                     dur,
-                    Source.TAGS);
+                    Source.TAGS,
+                    first(tag, FieldKey.LYRICS));
         } catch (Exception | LinkageError e) {
             return null;
         }
@@ -123,7 +130,7 @@ public final class TagReader {
                     tags.getOrDefault("album", ""),
                     leadingInt(tags.getOrDefault("track", "")),
                     leadingInt(tags.getOrDefault("disc", "")),
-                    dur, Source.FFPROBE);
+                    dur, Source.FFPROBE, embeddedLyrics(tags));
         } catch (IOException | RuntimeException e) {
             return null;
         } catch (InterruptedException e) {
@@ -132,6 +139,18 @@ public final class TagReader {
         } finally {
             if (p != null && p.isAlive()) p.destroyForcibly();
         }
+    }
+
+    /** Lyrics as ffprobe names them: LYRICS, UNSYNCEDLYRICS, or language-suffixed "lyrics-eng". */
+    static String embeddedLyrics(Map<String, String> tags) {
+        for (String k : List.of("lyrics", "unsyncedlyrics", "unsynced lyrics")) {
+            String v = tags.get(k);
+            if (v != null && !v.isBlank()) return v;
+        }
+        for (Map.Entry<String, String> e : tags.entrySet()) {
+            if (e.getKey().startsWith("lyrics") && !e.getValue().isBlank()) return e.getValue();
+        }
+        return "";
     }
 
     private static void mergeTags(Map<String, String> into, Object tags) {
@@ -165,7 +184,7 @@ public final class TagReader {
         }
         Path parent = file.getParent();
         String album = parent == null || parent.getFileName() == null ? "" : parent.getFileName().toString();
-        return new Tags(title, artist, album, trackNo, 0, 0, Source.FILENAME);
+        return new Tags(title, artist, album, trackNo, 0, 0, Source.FILENAME, "");
     }
 
     /** "3/12" → 3, "  07 " → 7, garbage → 0. */
