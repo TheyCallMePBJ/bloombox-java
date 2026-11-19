@@ -36,7 +36,7 @@ public final class PlaybackController implements MpvPlayer.Listener {
     /** "Previous" restarts the current track instead when we are past this point. */
     static final double RESTART_THRESHOLD_S = 3.0;
 
-    private final Library library;
+    private volatile Library library;
     private final AudioBackend audio;
     private final PlayQueue queue;
     private final Executor events;
@@ -87,6 +87,17 @@ public final class PlaybackController implements MpvPlayer.Listener {
     public synchronized List<Integer> queuePlayOrder() { return queue.playOrder(); }
     public synchronized int queuePosition() { return queue.currentPosition(); }
     public Library library() { return library; }
+
+    /**
+     * Swaps in a freshly scanned library. Track ids are not stable across scans, so
+     * playback stops and the queue is cleared.
+     */
+    public synchronized void setLibrary(Library newLibrary) {
+        if (current != null) audio.stop();
+        queue.clear();
+        library = newLibrary;
+        setCurrent(null);
+    }
 
     // ---- commands ---------------------------------------------------------------
 
