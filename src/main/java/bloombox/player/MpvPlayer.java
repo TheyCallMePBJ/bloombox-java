@@ -23,7 +23,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p>Thread-safety: commands may be sent from any thread; events are delivered on
  * a single reader thread.
  */
-public final class MpvPlayer implements Closeable {
+public final class MpvPlayer implements AudioBackend, Closeable {
 
     /** Callbacks from mpv. All methods are invoked on the IPC reader thread. */
     public interface Listener {
@@ -34,6 +34,8 @@ public final class MpvPlayer implements Closeable {
         /** Track finished. {@code naturalEnd} is false when stopped/replaced/errored. */
         default void onEndFile(boolean naturalEnd, String reason) {}
         default void onFileLoaded() {}
+        /** Playback resumed after a seek or a file load; time-pos is accurate again. */
+        default void onPlaybackRestart() {}
         default void onDisconnected() {}
     }
 
@@ -226,6 +228,9 @@ public final class MpvPlayer implements Closeable {
             }
             case "file-loaded" -> {
                 for (Listener l : listeners) l.onFileLoaded();
+            }
+            case "playback-restart" -> {
+                for (Listener l : listeners) l.onPlaybackRestart();
             }
             default -> { }
         }
