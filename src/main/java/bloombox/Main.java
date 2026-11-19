@@ -13,7 +13,9 @@ import bloombox.library.LibraryLoader;
 import bloombox.library.LrcParser;
 import bloombox.library.Lyrics;
 import bloombox.library.Track;
+import bloombox.mpris.MprisService;
 import bloombox.player.MpvPlayer;
+import bloombox.player.PlaybackController;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +35,9 @@ public final class Main {
                   --no-bloom   baseline: KMP every lyric track (no Bloom screening)
                   --plain-trie use the uncompressed trie instead of the radix trie
                   --limit N    max results to print (default 20)
+              bloombox play [--shuffle] [QUERY...] headless player with MPRIS (media keys);
+                                                  queues search results, or the whole library.
+                                                  type n/p/t/s/r/+/-/q then Enter to control
               bloombox --play FILE                play one file with synced lyrics on stdout
 
             query syntax:
@@ -54,6 +59,7 @@ public final class Main {
                 }
                 case "scan" -> scan(args);
                 case "search" -> search(args);
+                case "play" -> headlessPlay(args);
                 default -> fail("unknown command '" + args[0] + "'\n\n" + USAGE);
             }
         } catch (IllegalArgumentException e) {
@@ -126,6 +132,95 @@ public final class Main {
         }
         System.out.println();
         for (String line : out.report().describe()) System.out.println("· " + line);
+    }
+
+    private static void headlessPlay(String[] args) throws Exception {
+        boolean shuffle = false;
+        List<String> words = new ArrayList<>();
+        for (int i = 1; i < args.length; i++) {
+            if (args[i].equals("--shuffle")) shuffle = true;
+            else words.add(args[i]);
+        }
+        Settings settings = Settings.load();
+        Library lib = loadLibrary(settings);
+        if (lib.isEmpty()) fail("library is empty");
+        List<Integer> ids = new ArrayList<>();
+        if (words.isEmpty()) {
+            for (Track t : lib.tracks()) ids.add(t.id());
+        } else {
+            SearchIndex.Outcome out = SearchIndex.build(lib).search(Query.parse(String.join(" ", words)),
+                    new SearchIndex.Options(10_000, true));
+            for (SearchResult r : out.results()) ids.add(r.track().id());
+            if (ids.isEmpty()) fail("no matches for: " + String.join(" ", words));
+        }
+
+        MpvPlayer mpv = MpvPlayer.start(settings.volume());
+        PlaybackController ctl = new PlaybackController(lib, mpv);
+        CountDownLatch quit = new CountDownLatch(1);
+        MprisService mpris = new MprisService(ctl, t -> null, quit::countDown);
+        try {
+            mpris.start();
+            System.out.println("MPRIS: registered as " + mpris.busName());
+        } catch (Exception e) {
+            System.out.println("MPRIS unavailable (" + e.getMessage() + "); media keys disabled");
+        }
+        ctl.addListener(new PlaybackController.Listener() {
+            @Override
+            public void onTrackChanged(Track t) {
+                System.out.println(t == null ? "■ stopped" : "▶ " + nz(t.artist()) + " — " + t.title());
+            }
+
+            @Override
+            public void onStatusChanged(PlaybackController.Status s) {
+                System.out.println("  [" + s.name().toLowerCase() + "]");
+            }
+
+            @Override
+            public void onModesChanged(boolean sh, bloombox.player.PlayQueue.Repeat r) {
+                System.out.println("  shuffle " + (sh ? "on" : "off") + ", repeat " + r.name().toLowerCase());
+            }
+
+            @Override
+            public void onError(String message) {
+                System.out.println("  ! " + message);
+            }
+        });
+        Runnable shutdown = () -> {
+            settings.setVolume((int) Math.round(ctl.volume()));
+            try { settings.save(); } catch (Exception ignored) { }
+            mpris.close();
+            mpv.close();
+        };
+        Runtime.getRuntime().addShutdownHook(new Thread(shutdown));
+
+        ctl.setShuffle(shuffle);
+        ctl.playQueue(ids, 0, 0);
+        System.out.println(ids.size() + " tracks queued. n=next p=prev t=play/pause s=shuffle r=repeat +/-=volume q=quit");
+
+        Thread stdin = new Thread(() -> {
+            try (var in = new java.io.BufferedReader(new java.io.InputStreamReader(System.in))) {
+                String line;
+                while ((line = in.readLine()) != null) {
+                    switch (line.strip()) {
+                        case "n" -> ctl.next();
+                        case "p" -> ctl.previous();
+                        case "t", "" -> ctl.playPause();
+                        case "s" -> ctl.toggleShuffle();
+                        case "r" -> ctl.cycleRepeat();
+                        case "+" -> ctl.changeVolume(5);
+                        case "-" -> ctl.changeVolume(-5);
+                        case "q" -> { quit.countDown(); return; }
+                        default -> System.out.println("? n p t s r + - q");
+                    }
+                }
+            } catch (java.io.IOException ignored) {
+                // stdin closed
+            }
+        }, "stdin");
+        stdin.setDaemon(true);
+        stdin.start();
+        quit.await();
+        System.exit(0); // runs the shutdown hook
     }
 
     private static Library loadLibrary(Settings settings) throws Exception {
