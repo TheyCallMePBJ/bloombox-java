@@ -9,7 +9,7 @@ import com.googlecode.lanterna.TextColor;
  *       holds 2 sample columns × 4 dot rows; over two rows that gives 4 dots above and 4 below
  *       a centre line, which stays visible through silence.</li>
  *   <li>{@code bars}: solid mirrored block glyphs (heavier look).</li>
- *   <li>{@code line}: a plain progress line with a playhead.</li>
+ *   <li>{@code line}: a solid progress bar centred in the two rows, with a taller playhead.</li>
  * </ul>
  */
 final class Waveform {
@@ -25,7 +25,7 @@ final class Waveform {
         if (w <= 0) return;
         switch (style == null ? "wave" : style) {
             case "bars" -> bars(cv, env, x, y, w, h, played, active);
-            case "line" -> line(cv, x, y + h - 1, w, played, active);
+            case "line" -> line(cv, x, y, w, h, played, active);
             default -> braille(cv, env, x, y, w, h, played, active);
         }
     }
@@ -92,11 +92,27 @@ final class Waveform {
         }
     }
 
-    private static void line(Canvas cv, int x, int y, int w, double played, boolean active) {
+    /**
+     * A solid progress bar centred on the boundary between the two rows: the top row's lower
+     * part and the bottom row's upper part are filled (in eighths of a cell), so the bar sits
+     * exactly mid-way and can be thicker than one glyph stroke. The playhead is a taller knob.
+     */
+    private static void line(Canvas cv, int x, int y, int w, int h, double played, boolean active) {
         int head = (int) Math.round(played * (w - 1));
+        if (h < 2) { // not enough room: single-row fallback
+            for (int c = 0; c < w; c++) {
+                char g = active && c == head ? '●' : c < head && active ? '━' : '─';
+                cv.ch(x + c, y, g, colour(c, head, active), Theme.BAR);
+            }
+            return;
+        }
+        final int bar = 3, knob = 7; // eighths of a cell above and below the centre line
         for (int c = 0; c < w; c++) {
-            if (active && c == head) cv.ch(x + c, y, '●', Theme.TEXT, Theme.BAR);
-            else cv.ch(x + c, y, c < head && active ? '━' : '─', colour(c, head, active), Theme.BAR);
+            boolean isHead = active && c == head;
+            int t = isHead ? knob : bar;
+            TextColor col = colour(c, head, active);
+            cv.ch(x + c, y, LOWER[t], col, Theme.BAR);
+            cv.ch(x + c, y + 1, LOWER[8 - t], Theme.BAR, col); // inverted: upper t/8 shows col
         }
     }
 }
