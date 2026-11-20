@@ -130,4 +130,39 @@ class TuiHelpersTest {
             assertEquals(Character.NON_SPACING_MARK, Character.getType(cp), Integer.toHexString(cp));
         }
     }
+
+    @Test
+    void themeFadesToTargetAndStops() {
+        Theme.Scheme orig = Theme.current();
+        try {
+            Theme.Scheme green = new Theme.Scheme(0x101510, 0x141a14, 0x181f18, 0x0f120f, 0x203020, 0x304030,
+                    0x80e080, 0x406040, 0x80c0ff, "test");
+            Theme.transitionTo(green, 1000);
+            assertTrue(Theme.tick(1100), "mid-fade");
+            assertNotEquals(0x80e080, rgbOf(Theme.ACCENT));
+            assertFalse(Theme.tick(5000), "fade finished");
+            assertEquals(0x80e080, rgbOf(Theme.ACCENT));
+            assertEquals(0x141a14, rgbOf(Theme.PANEL));
+            assertFalse(Theme.tick(6000), "idle when nothing changes");
+        } finally {
+            Theme.transitionTo(orig, 0);
+            Theme.tick(Long.MAX_VALUE / 2);
+        }
+    }
+
+    @Test
+    void coverSchemeKeepsSurfacesDarkAndAccentReadable() {
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(40, 40, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < 40; y++) for (int x = 0; x < 40; x++) img.setRGB(x, y, x < 28 ? 0x0b2a55 : 0xf2c14e);
+        Theme.Scheme s = Theme.Scheme.fromCover(img);
+        double bgL = bloombox.core.color.Lab.fromRgb(s.bg())[0], accL = bloombox.core.color.Lab.fromRgb(s.accent())[0];
+        assertTrue(bgL < 15, "background stays dark: L=" + bgL);
+        assertTrue(accL >= 69, "accent readable: L=" + accL);
+        assertNotEquals(Theme.Scheme.DEFAULT.accent(), s.accent());
+        assertTrue(s.description().startsWith("k-means++"));
+    }
+
+    private static int rgbOf(com.googlecode.lanterna.TextColor c) {
+        return (c.getRed() << 16) | (c.getGreen() << 8) | c.getBlue();
+    }
 }

@@ -70,6 +70,11 @@ final class ArtService implements AutoCloseable {
         return a == null ? null : a.orElse(null);
     }
 
+    /** True once the art lookup for {@code t} has finished (with or without finding art). */
+    boolean known(Track t) {
+        return cache.get(key(t)) != null;
+    }
+
     boolean isLoading(Track t) {
         return loading.containsKey(key(t));
     }
@@ -95,7 +100,9 @@ final class ArtService implements AutoCloseable {
         return a == null ? null : a.pngFile();
     }
 
-    private Art load(Track t) {
+    // synchronized: the art worker and the MPRIS thread (cachedArtFile) may ask for the same
+    // track at once; without this both would decode it and create two images with different ids
+    private synchronized Art load(Track t) {
         String k = key(t);
         Optional<Art> cached = cache.get(k);
         if (cached != null) return cached.orElse(null);

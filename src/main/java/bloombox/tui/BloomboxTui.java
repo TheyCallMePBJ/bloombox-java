@@ -9,7 +9,6 @@ import bloombox.index.SearchReport;
 import bloombox.index.SearchResult;
 import bloombox.library.Library;
 import bloombox.library.LibraryLoader;
-import bloombox.library.LyricLine;
 import bloombox.library.Lyrics;
 import bloombox.library.Track;
 import bloombox.mpris.MprisService;
@@ -17,7 +16,6 @@ import bloombox.player.MpvPlayer;
 import bloombox.player.PlayQueue;
 import bloombox.player.PlaybackController;
 import com.googlecode.lanterna.SGR;
-import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyStroke;
@@ -27,7 +25,6 @@ import com.googlecode.lanterna.input.MouseActionType;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.MouseCaptureMode;
-import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.ansi.UnixLikeTerminal;
 
 import java.io.IOException;
@@ -180,8 +177,9 @@ public final class BloomboxTui implements PlaybackController.Listener {
             TerminalSize resized = screen.doResizeIfNecessary();
             boolean full = resized != null;
             long now = System.currentTimeMillis();
+            boolean fading = updateTheme(now);
             boolean animate = ctl.status() == PlaybackController.Status.PLAYING || scanProgress != null;
-            if (full || dirty || (animate && now - lastFrame >= (cava != null && cava.isRunning() ? 33 : 100))) {
+            if (full || dirty || fading || (animate && now - lastFrame >= (cava != null && cava.isRunning() ? 33 : 100))) {
                 dirty = false;
                 render();
                 screen.refresh(full ? Screen.RefreshType.COMPLETE : Screen.RefreshType.DELTA);
@@ -198,6 +196,41 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     void markDirty() {
         dirty = true;
+    }
+
+    // ---- dynamic theme
+
+    private static final String[] THEME_MODES = {"cover", "static"};
+    private int themedArtId = Integer.MIN_VALUE;
+    private final java.util.Map<Integer, Theme.Scheme> schemes = new java.util.LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(java.util.Map.Entry<Integer, Theme.Scheme> e) {
+            return size() > 64;
+        }
+    };
+
+    /**
+     * Points the theme at the playing track's cover (or the default). Waits while the art is
+     * still loading so that changing albums fades cover → cover without a flash of the default.
+     * Returns true while a cross-fade is running.
+     */
+    private boolean updateTheme(long now) {
+        boolean on = "cover".equals(settings.get(Settings.THEME, "cover"));
+        Track t = ctl.current();
+        int key;
+        if (!on) key = -1;
+        else if (t == null) key = themedArtId == Integer.MIN_VALUE ? -1 : themedArtId; // keep last
+        else if (!art.known(t)) key = themedArtId == Integer.MIN_VALUE ? -1 : themedArtId; // still loading
+        else {
+            ArtService.Art a = art.get(t);
+            key = a == null ? -1 : a.id();
+            if (a != null && !schemes.containsKey(key)) schemes.put(key, Theme.Scheme.fromCover(a.image()));
+        }
+        if (key != themedArtId) {
+            themedArtId = key;
+            Theme.transitionTo(key == -1 ? Theme.Scheme.DEFAULT : schemes.get(key), now);
+        }
+        return Theme.tick(now);
     }
 
     private void post(Runnable r) {
@@ -533,7 +566,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private static final String[] ART_MODES = {"auto", "kitty", "blocks", "off"};
     private static final String[] VIZ_MODES = {"cava", "off"};
-    private static final int SETTINGS_ROWS = 5;
+    private static final int SETTINGS_ROWS = 6;
 
     private void openSettings() {
         overlay = Overlay.SETTINGS;
@@ -600,7 +633,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 settings.set(Settings.SEEKBAR, cycle(Waveform.STYLES, settings.get(Settings.SEEKBAR, "wave"), dir));
                 saveSettings();
             }
-            case 4 -> settings.musicDir().ifPresentOrElse(d -> {
+            case 4 -> {
+                settings.set(Settings.THEME, cycle(THEME_MODES, settings.get(Settings.THEME, "cover"), dir));
+                saveSettings();
+            }
+            case 5 -> settings.musicDir().ifPresentOrElse(d -> {
                 startScan(d);
                 overlay = Overlay.NONE;
             }, () -> flash("Set a music folder first", Theme.WARN));
@@ -1104,7 +1141,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
     }
 
     private void drawSettings(Canvas cv, int w, int h) {
-        int bw = Math.min(w - 4, 80), bh = 15;
+        int bw = Math.min(w - 4, 80), bh = 17;
         int bx = (w - bw) / 2, by = Math.max(1, (h - bh) / 2);
         cv.box(bx, by, bw, bh, "Settings", Theme.ACCENT_DIM, Theme.PANEL);
         String dir = settings.musicDir().map(Path::toString).orElse("(not set)");
@@ -1114,6 +1151,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Visualizer", settings.get(Settings.VISUALIZER, "cava")
                         + (LibraryLoader.onPath("cava") ? "" : "  (cava not installed)")},
                 {"Seek bar", settings.get(Settings.SEEKBAR, "wave")},
+                {"Theme", "cover".equals(settings.get(Settings.THEME, "cover"))
+                        ? "cover  (" + Theme.current().description() + ")" : "static"},
                 {"Rescan library", scanProgress != null ? scanProgress : "press Enter"},
         };
         for (int i = 0; i < rows.length; i++) {
@@ -1132,7 +1171,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 cv.ch(vx + Math.min(vw - 1, Canvas.width(visible)), y, ' ', Theme.BG, Theme.ACCENT);
                 if (shown < 0) return;
             } else {
-                cv.text(vx, y, rows[i][1], vw, i >= 1 && i <= 3 ? Theme.ACCENT2 : Theme.DIM, bg);
+                cv.text(vx, y, rows[i][1], vw, i >= 1 && i <= 4 ? Theme.ACCENT2 : Theme.DIM, bg);
             }
         }
         String hint = settingsEditing ? "Enter save & scan · Esc cancel · Ctrl+U clear"

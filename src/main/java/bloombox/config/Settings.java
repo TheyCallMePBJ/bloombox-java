@@ -21,6 +21,7 @@ public final class Settings {
     public static final String ART_MODE = "ui.art";          // auto | kitty | blocks | off
     public static final String VISUALIZER = "ui.visualizer"; // cava | off
     public static final String SEEKBAR = "ui.seekbar";       // wave | bars | line
+    public static final String THEME = "ui.theme";           // cover | static
 
     private final Path file;
     private final Properties props = new Properties();
