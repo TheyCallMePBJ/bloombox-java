@@ -1,0 +1,4 @@
+method,trials,chi_square,df,p_value,min_cell_share,max_cell_share,expected_share,replicates,rejections_at_0.05,median_chi_square
+fisher-yates,240000,33.95,23,0.06582,0.04064,0.04307,0.04167,40,2,22.68
+naive-swap,240000,7275,23,0,0.03107,0.05811,0.04167,40,40,7163
+sort-by-key,240000,19.4,23,0.6781,0.04093,0.04228,0.04167,40,2,22.45

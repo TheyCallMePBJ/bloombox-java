@@ -138,4 +138,16 @@ class PaletteExtractorTest {
         assertEquals(PaletteExtractor.Kind.MUTED, p.kind());
         assertTrue(Lab.hueDistance(Lab.hue(Lab.fromRgb(0x8a8580)), Lab.hue(Lab.fromRgb(p.accent()))) < 25);
     }
+
+    @Test
+    void randomSeedingBaselineWorksAndReportsInertia() {
+        int[] px = image(new int[]{0xff0000, 0x00ff00, 0x0000ff, 0xffff00}, new int[]{300, 300, 300, 12});
+        PaletteExtractor.Clustering pp = PaletteExtractor.cluster(px, 4, 1, PaletteExtractor.Seeding.KMEANS_PP);
+        PaletteExtractor.Clustering rnd = PaletteExtractor.cluster(px, 4, 1, PaletteExtractor.Seeding.RANDOM);
+        assertEquals(4, pp.swatches().size(), "k-means++ finds the small yellow cluster");
+        assertEquals(0, pp.inertia(), 1e-6, "four exact colours: zero error");
+        assertTrue(rnd.inertia() >= pp.inertia());
+        assertEquals(1.0, rnd.swatches().stream().mapToDouble(PaletteExtractor.Swatch::share).sum(), 1e-9);
+        assertThrows(IllegalArgumentException.class, () -> PaletteExtractor.cluster(px, 4, 1, null));
+    }
 }

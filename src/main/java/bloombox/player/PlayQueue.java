@@ -209,7 +209,7 @@ public final class PlayQueue {
     }
 
     /** In-place uniform random permutation (Durstenfeld's Fisher–Yates). Package-private for tests. */
-    static void fisherYates(int[] a, Random rnd) {
+    public static void fisherYates(int[] a, Random rnd) {
         for (int i = a.length - 1; i > 0; i--) {
             swap(a, i, rnd.nextInt(i + 1));
         }

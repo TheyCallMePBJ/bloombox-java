@@ -42,6 +42,7 @@ public final class Main {
                                                   queues search results, or the whole library.
                                                   type n/p/t/s/r/+/-/q then Enter to control
               bloombox --play FILE                play one file with synced lyrics on stdout
+              bloombox bench [--quick] [...]      run the benchmark suite (see: bloombox bench --help)
 
             query syntax:
               blue mon              words (prefixes), ANDed, any field
@@ -68,6 +69,7 @@ public final class Main {
                 case "scan" -> scan(args);
                 case "search" -> search(args);
                 case "play" -> headlessPlay(args);
+                case "bench" -> bloombox.bench.BenchMain.main(java.util.Arrays.copyOfRange(args, 1, args.length));
                 default -> fail("unknown command '" + args[0] + "'\n\n" + USAGE);
             }
         } catch (IllegalArgumentException e) {

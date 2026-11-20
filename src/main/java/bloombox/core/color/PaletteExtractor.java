@@ -60,8 +60,25 @@ public final class PaletteExtractor {
         }
     }
 
-    /** Result of {@link #cluster}: swatches by share (largest first) plus the work done. */
-    public record Clustering(List<Swatch> swatches, int iterations, long distanceEvaluations) {}
+    /**
+     * Result of {@link #cluster}: swatches by share (largest first) plus the work done.
+     *
+     * @param inertia sum of squared Lab distances from each pixel to its cluster centre (the
+     *                k-means objective; lower is a better clustering)
+     */
+    public record Clustering(List<Swatch> swatches, int iterations, long distanceEvaluations, double inertia) {
+        public Clustering(List<Swatch> swatches, int iterations, long distanceEvaluations) {
+            this(swatches, iterations, distanceEvaluations, 0);
+        }
+    }
+
+    /** How the initial centres are chosen. */
+    public enum Seeding {
+        /** D²-weighted sampling (Arthur &amp; Vassilvitskii 2007): the default. */
+        KMEANS_PP,
+        /** k pixels chosen uniformly at random: the classic baseline, kept for benchmarks. */
+        RANDOM
+    }
 
     /**
      * @param accent     main accent (raw cluster colour, not yet adjusted for readability)
@@ -73,8 +90,13 @@ public final class PaletteExtractor {
     public record Palette(int accent, int secondary, double baseHue, double baseChroma, Kind kind,
                           Clustering clustering) {}
 
-    /** Clusters 0xRRGGBB pixels into at most {@code k} colours. */
+    /** Clusters 0xRRGGBB pixels into at most {@code k} colours (k-means++ seeding). */
     public static Clustering cluster(int[] rgbPixels, int k, long seed) {
+        return cluster(rgbPixels, k, seed, Seeding.KMEANS_PP);
+    }
+
+    public static Clustering cluster(int[] rgbPixels, int k, long seed, Seeding seeding) {
+        if (seeding == null) throw new IllegalArgumentException("seeding must not be null");
         if (rgbPixels == null) throw new IllegalArgumentException("pixels must not be null");
         if (k < 1 || k > 64) throw new IllegalArgumentException("k must be in 1..64, got " + k);
         int n = rgbPixels.length;
@@ -83,14 +105,18 @@ public final class PaletteExtractor {
         for (int i = 0; i < n; i++) pts[i] = Lab.fromRgb(rgbPixels[i]);
         long evals = 0;
 
-        // ---- k-means++ seeding
         Random rnd = new Random(seed);
         List<double[]> centres = new ArrayList<>();
         centres.add(pts[rnd.nextInt(n)].clone());
+        if (seeding == Seeding.RANDOM) {
+            // baseline: further centres uniformly at random (may coincide → empty clusters)
+            while (centres.size() < Math.min(k, n)) centres.add(pts[rnd.nextInt(n)].clone());
+        }
+        // ---- k-means++ seeding
         double[] d2 = new double[n];
         for (int i = 0; i < n; i++) d2[i] = Lab.distanceSq(pts[i], centres.get(0));
         evals += n;
-        while (centres.size() < k) {
+        while (seeding == Seeding.KMEANS_PP && centres.size() < k) {
             double total = 0;
             for (double v : d2) total += v;
             if (total <= 1e-9) break; // fewer distinct colours than k
@@ -149,7 +175,11 @@ public final class PaletteExtractor {
         }
 
         int[] cnt = new int[kk];
-        for (int a : assign) cnt[a]++;
+        double inertia = 0;
+        for (int i = 0; i < n; i++) {
+            cnt[assign[i]]++;
+            inertia += Lab.distanceSq(pts[i], centres.get(assign[i]));
+        }
         List<Swatch> out = new ArrayList<>();
         for (int c = 0; c < kk; c++) {
             if (cnt[c] == 0) continue; // empty cluster: dropped
@@ -157,7 +187,7 @@ public final class PaletteExtractor {
             out.add(new Swatch(Lab.toRgb(lab[0], lab[1], lab[2]), lab, cnt[c] / (double) n));
         }
         out.sort(Comparator.comparingDouble(Swatch::share).reversed());
-        return new Clustering(List.copyOf(out), iter, evals);
+        return new Clustering(List.copyOf(out), iter, evals, inertia);
     }
 
     public static Palette extract(int[] rgbPixels, long seed) {
