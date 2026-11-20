@@ -165,4 +165,42 @@ class TuiHelpersTest {
     private static int rgbOf(com.googlecode.lanterna.TextColor c) {
         return (c.getRed() << 16) | (c.getGreen() << 8) | c.getBlue();
     }
+
+    @Test
+    void parsesOsc4RepliesWithAnyChannelWidth() {
+        String reply = "\033]4;1;rgb:cdcd/acac/acac\033\\\033]4;4;rgb:b4/bc/c4\007\033]4;5;rgb:f/0/8\033\\\033[?62;4c";
+        var m = TerminalPalette.parseOsc4(reply);
+        assertEquals(0xcdacac, m.get(1));
+        assertEquals(0xb4bcc4, m.get(4));
+        assertEquals(0xff0088, m.get(5), "1-digit channels scale to 8 bits");
+        assertEquals(3, m.size());
+        assertTrue(TerminalPalette.parseOsc4("\033[?62;4c").isEmpty(), "terminal answered only DA1");
+    }
+
+    @Test
+    void parsesGhosttyShowConfigPalette() {
+        String cfg = "theme = compline\nbackground = #1a1d21\npalette = 0=#22262b\npalette = 1=#cdacac\n"
+                + "palette = 4=#b4bcc4\npalette = 200=#123456\npalette = bogus\n";
+        var m = TerminalPalette.parseGhostty(cfg);
+        assertEquals(java.util.Map.of(0, 0x22262b, 1, 0xcdacac, 4, 0xb4bcc4), m, "only slots 0-15, malformed lines skipped");
+    }
+
+    @Test
+    void terminalSchemePicksMostColourfulSlotNotFixedMagenta() {
+        // Ghostty "compline": slot 5 (magenta) is beige; the rose in slot 1 is the colourful one
+        var compline = new java.util.HashMap<Integer, Integer>();
+        int[] c = {0, 0xcdacac, 0xb8c4b8, 0xd4ccb4, 0xb4bcc4, 0xccc4b4, 0xb4c0c8};
+        for (int i = 1; i <= 6; i++) { compline.put(i, c[i]); compline.put(i + 8, c[i]); }
+        Theme.Scheme s = Theme.Scheme.fromTerminal(compline, "ghostty palette");
+        assertEquals(0xcdacac, s.accent(), "user colour kept as-is");
+        assertNotEquals(-1, s.accent2());
+        assertTrue(bloombox.core.color.Lab.hueDistance(
+                bloombox.core.color.Lab.hue(bloombox.core.color.Lab.fromRgb(s.accent())),
+                bloombox.core.color.Lab.hue(bloombox.core.color.Lab.fromRgb(s.accent2()))) >= 45);
+        assertEquals(Theme.Scheme.DEFAULT.bg(), s.bg(), "surfaces unchanged");
+        assertEquals(Theme.Scheme.DEFAULT, Theme.Scheme.fromTerminal(java.util.Map.of(), "x"), "no palette → built-in");
+        var grey = new java.util.HashMap<Integer, Integer>();
+        for (int slot : TerminalPalette.ACCENT_SLOTS) grey.put(slot, 0x808080);
+        assertEquals(Theme.Scheme.DEFAULT, Theme.Scheme.fromTerminal(grey, "x"), "all-grey palette → built-in");
+    }
 }

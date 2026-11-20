@@ -169,6 +169,14 @@ final class KittyImages {
         return v == null ? "" : v.toLowerCase(Locale.ROOT);
     }
 
+    /** TERM of the terminal the user actually sees (tmux's client terminal when inside tmux), lowercase. */
+    static String outerTerminal() {
+        if (env("TMUX").isEmpty()) {
+            return env("TERM_PROGRAM").equals("ghostty") ? "xterm-ghostty" : env("TERM");
+        }
+        return tmuxOuterTerm();
+    }
+
     private static String tmuxOuterTerm() {
         String t = run("tmux", "display-message", "-p", "#{client_termname}");
         return t == null ? "" : t.toLowerCase(Locale.ROOT);

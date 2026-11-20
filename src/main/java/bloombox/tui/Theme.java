@@ -43,12 +43,14 @@ final class Theme {
             PaletteExtractor.Palette p = PaletteExtractor.extract(px, java.util.Arrays.hashCode(px));
             String work = "k-means++: " + p.clustering().swatches().size() + " clusters, "
                     + p.clustering().iterations() + " iterations";
-            if (!p.vivid()) return withDescription(DEFAULT, "grey cover, default colours · " + work);
-            return fromPalette(p, work);
+            if (!p.vivid()) return withDescription(fallback, "grey cover, " + fallback.description() + " · " + work);
+            return fromPalette(p, (p.muted() ? "muted · " : "") + work);
         }
 
         static Scheme fromPalette(PaletteExtractor.Palette p, String description) {
-            int accent = PaletteExtractor.readable(p.accent(), 70, 82, 32, 62);
+            int accent = p.muted()
+                    ? PaletteExtractor.readable(p.accent(), 72, 84, 16, 30)  // keep a muted cover muted
+                    : PaletteExtractor.readable(p.accent(), 70, 82, 32, 62);
             int accent2 = p.secondary() >= 0
                     ? PaletteExtractor.readable(p.secondary(), 74, 84, 24, 50)
                     : Lab.fromLch(80, 34, (Lab.hue(Lab.fromRgb(accent)) + 150) % 360); // split-complement
@@ -73,6 +75,29 @@ final class Theme {
             return new Scheme(s.bg, s.panel, s.stripe, s.bar, s.select, s.border, s.accent, s.accentDim, s.accent2, d);
         }
 
+        /**
+         * Fallback scheme with the accents taken from the terminal's ANSI palette, picked the
+         * same way as from a cover (most colourful slot; second one at a different hue). The
+         * user chose these colours, so only too-dark ones are lightened; chroma is kept.
+         */
+        static Scheme fromTerminal(java.util.Map<Integer, Integer> ansi, String source) {
+            java.util.List<PaletteExtractor.Swatch> sw = new java.util.ArrayList<>();
+            for (int slot : TerminalPalette.ACCENT_SLOTS) {
+                Integer c = ansi.get(slot);
+                if (c != null) sw.add(new PaletteExtractor.Swatch(c, Lab.fromRgb(c), 0));
+            }
+            if (sw.isEmpty()) return DEFAULT;
+            java.util.List<PaletteExtractor.Swatch> equal = new java.util.ArrayList<>();
+            for (PaletteExtractor.Swatch x : sw) equal.add(new PaletteExtractor.Swatch(x.rgb(), x.lab(), 1.0 / sw.size()));
+            PaletteExtractor.Palette p = PaletteExtractor.fromClustering(new PaletteExtractor.Clustering(equal, 0, 0));
+            if (!p.vivid()) return DEFAULT; // all-grey terminal palette
+            int accent = PaletteExtractor.readable(p.accent(), 60, 95, 0, 200);
+            int accent2 = p.secondary() >= 0 ? PaletteExtractor.readable(p.secondary(), 60, 95, 0, 200) : DEFAULT.accent2();
+            Scheme d = DEFAULT;
+            return new Scheme(d.bg(), d.panel(), d.stripe(), d.bar(), mixRgb(d.panel(), accent, 0.16), d.border(),
+                    accent, mixRgb(d.panel(), accent, 0.55), accent2, source + " colours");
+        }
+
         int[] values() {
             return new int[]{bg, panel, stripe, bar, select, border, accent, accentDim, accent2};
         }
@@ -84,6 +109,23 @@ final class Theme {
     private static int[] from = Scheme.DEFAULT.values(), shown = from;
     private static Scheme target = Scheme.DEFAULT;
     private static long fadeStart = 0;
+    /** Used when there is no usable cover: the terminal-derived scheme, or {@link Scheme#DEFAULT}. */
+    private static Scheme fallback = Scheme.DEFAULT;
+
+    static Scheme fallback() {
+        return fallback;
+    }
+
+    /** Sets the fallback; if it is what is showing now, switches to it immediately. */
+    static void setFallback(Scheme s) {
+        boolean showingFallback = target.equals(fallback);
+        fallback = s;
+        if (showingFallback) {
+            target = s;
+            from = shown = s.values();
+            apply(shown);
+        }
+    }
 
     static {
         apply(shown);

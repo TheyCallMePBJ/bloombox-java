@@ -119,6 +119,9 @@ public final class BloomboxTui implements PlaybackController.Listener {
             mpris = null;
         }
 
+        // before Lanterna owns the terminal: ask it for its colour palette (fallback accent)
+        TerminalPalette.Result pal = TerminalPalette.detect();
+        if (!pal.colours().isEmpty()) Theme.setFallback(Theme.Scheme.fromTerminal(pal.colours(), pal.source()));
         Utf8UnixTerminal terminal = new Utf8UnixTerminal(System.in, System.out, UnixLikeTerminal.CtrlCBehaviour.TRAP);
         terminal.setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE);
         screen = new TerminalScreen(terminal);
@@ -228,7 +231,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         }
         if (key != themedArtId) {
             themedArtId = key;
-            Theme.transitionTo(key == -1 ? Theme.Scheme.DEFAULT : schemes.get(key), now);
+            Theme.transitionTo(key == -1 ? Theme.fallback() : schemes.get(key), now);
         }
         return Theme.tick(now);
     }
@@ -1152,7 +1155,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
                         + (LibraryLoader.onPath("cava") ? "" : "  (cava not installed)")},
                 {"Seek bar", settings.get(Settings.SEEKBAR, "wave")},
                 {"Theme", "cover".equals(settings.get(Settings.THEME, "cover"))
-                        ? "cover  (" + Theme.current().description() + ")" : "static"},
+                        ? "cover  (" + Theme.current().description() + ")"
+                        : "static  (" + Theme.fallback().description() + ")"},
                 {"Rescan library", scanProgress != null ? scanProgress : "press Enter"},
         };
         for (int i = 0; i < rows.length; i++) {
