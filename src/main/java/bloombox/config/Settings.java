@@ -22,6 +22,7 @@ public final class Settings {
     public static final String VISUALIZER = "ui.visualizer"; // cava | off
     public static final String SEEKBAR = "ui.seekbar";       // wave | bars | line
     public static final String THEME = "ui.theme";           // cover | static
+    public static final String LYRIC_JUMP = "search.lyric_jump";  // off | on: lyric-only hits start at the line
     public static final String REPLAYGAIN = "player.replaygain";               // off | track | album
     public static final String REPLAYGAIN_PREAMP = "player.replaygain.preamp"; // dB, -12..+12
 

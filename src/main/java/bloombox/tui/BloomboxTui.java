@@ -384,12 +384,17 @@ public final class BloomboxTui implements PlaybackController.Listener {
             SearchResult r = results.get(sel);
             boolean lyricOnly = r.lyricTimeMs() >= 0 && !r.matched(Field.TITLE)
                     && !r.matched(Field.ARTIST) && !r.matched(Field.ALBUM);
-            if (lyricOnly) {
+            if (lyricOnly && lyricJumpEnabled()) {
                 start = Math.max(0, r.lyricTimeMs() / 1000.0 - 0.3);
                 flash("Jumping to lyric at " + Canvas.time(start), Theme.ACCENT2);
             }
         }
         ctl.playQueue(ids, sel, start);
+    }
+
+    /** Settings → "Lyric hits": start lyric-only search hits at the matched line (default: off, play from the start). */
+    private boolean lyricJumpEnabled() {
+        return "on".equals(settings.get(Settings.LYRIC_JUMP, "off"));
     }
 
     private void locatePlaying() {
@@ -595,7 +600,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private static final String[] ART_MODES = {"auto", "kitty", "blocks", "off"};
     private static final String[] VIZ_MODES = {"cava", "off"};
-    private static final int SETTINGS_ROWS = 8;
+    private static final int SETTINGS_ROWS = 9;
     private static final String[] RG_MODES = {"off", "track", "album"};
 
     private void openSettings() {
@@ -676,7 +681,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 ReplayGain rg = settings.replayGain();
                 applyReplayGain(rg.withPreamp(Math.rint(rg.preampDb()) + dir));
             }
-            case 7 -> settings.musicDir().ifPresentOrElse(d -> {
+            case 7 -> {
+                settings.set(Settings.LYRIC_JUMP, lyricJumpEnabled() ? "off" : "on");
+                saveSettings();
+            }
+            case 8 -> settings.musicDir().ifPresentOrElse(d -> {
                 startLoad(d, true);
                 overlay = Overlay.NONE;
             }, () -> flash("Set a music folder first", Theme.WARN));
@@ -1183,7 +1192,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private void drawHelp(Canvas cv, int w, int h) {
         String[][] keys = {
-                {"Enter / double-click", "play selection (lyric hits start at the line)"},
+                {"Enter / double-click", "play selection (from the matched lyric if enabled in settings)"},
                 {"Space", "play / pause"},
                 {"n  p", "next / previous (p restarts if > 3 s in)"},
                 {"← →  , .", "seek 5 s  (Shift+← → 30 s, click the waveform)"},
@@ -1229,6 +1238,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"ReplayGain", replayGainDetail(settings.replayGain())},
                 {"Pre-amp", ReplayGain.formatDb(settings.replayGain().preampDb())
                         + (settings.replayGain().enabled() ? "  (←/→ to adjust, ±12 dB)" : "  (ReplayGain is off)")},
+                {"Lyric hits", lyricJumpEnabled() ? "jump to the matched line" : "play from the start"},
                 {"Rescan library", scanProgress != null ? scanProgress : "press Enter"},
         };
         for (int i = 0; i < rows.length; i++) {
@@ -1248,7 +1258,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 if (shown < 0) return;
             } else {
                 boolean inactive = i == 6 && !settings.replayGain().enabled();
-                cv.text(vx, y, rows[i][1], vw, inactive ? Theme.FAINT : i >= 1 && i <= 6 ? Theme.ACCENT2 : Theme.DIM, bg);
+                cv.text(vx, y, rows[i][1], vw, inactive ? Theme.FAINT : i >= 1 && i <= 7 ? Theme.ACCENT2 : Theme.DIM, bg);
             }
         }
         String hint = settingsEditing ? "Enter save & scan · Esc cancel · Ctrl+U clear"
