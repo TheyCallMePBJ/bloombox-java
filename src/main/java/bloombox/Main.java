@@ -10,6 +10,7 @@ import bloombox.index.SearchIndex;
 import bloombox.index.SearchResult;
 import bloombox.library.Library;
 import bloombox.library.LibraryLoader;
+import bloombox.library.LibraryScanner;
 import bloombox.library.LrcParser;
 import bloombox.library.Lyrics;
 import bloombox.library.Track;
@@ -82,7 +83,7 @@ public final class Main {
             settings.setMusicDir(dir);
             settings.save();
         }
-        Library lib = loadLibrary(settings);
+        Library lib = loadLibrary(settings, true);
         System.out.println(lib.report().summary());
         for (String w : lib.report().warnings().subList(0, Math.min(10, lib.report().warnings().size()))) {
             System.out.println("  warn: " + w);
@@ -231,12 +232,18 @@ public final class Main {
     }
 
     private static Library loadLibrary(Settings settings) throws Exception {
+        return loadLibrary(settings, false);
+    }
+
+    /** {@code rescan=false}: use the saved library if there is one (search / play); true: walk the folder. */
+    private static Library loadLibrary(Settings settings, boolean rescan) throws Exception {
         Path dir = settings.musicDir().orElse(null);
         if (dir == null) fail("no music directory configured; run: bloombox scan ~/Music");
         boolean tty = System.console() != null;
-        Library lib = LibraryLoader.load(dir, (done, total) -> {
+        LibraryScanner.Progress progress = (done, total) -> {
             if (tty && (done % 25 == 0 || done == total)) System.err.printf("\rscanning %d/%d", done, total);
-        });
+        };
+        Library lib = rescan ? LibraryLoader.scan(dir, progress) : LibraryLoader.load(dir, progress);
         if (tty) System.err.print("\r\033[K");
         return lib;
     }

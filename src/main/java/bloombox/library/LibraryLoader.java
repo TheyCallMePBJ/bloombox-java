@@ -7,7 +7,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** Scans the configured music directory using the on-disk tag cache, then saves the cache. */
+/**
+ * Loads the library: from the snapshot saved by the last scan when possible (no folder
+ * access at all), otherwise by scanning with the tag and lyrics caches.
+ */
 public final class LibraryLoader {
 
     private LibraryLoader() {}
@@ -16,14 +19,37 @@ public final class LibraryLoader {
         return Settings.cacheHome().resolve("tags.bin");
     }
 
+    public static Path lyricsCacheFile() {
+        return Settings.cacheHome().resolve("lyrics.bin");
+    }
+
+    public static Path snapshotFile() {
+        return Settings.cacheHome().resolve("library.bin");
+    }
+
+    /** The library saved by the last scan of {@code musicDir}, or null (never touches the folder). */
+    public static LibrarySnapshot.Loaded loadSnapshot(Path musicDir) {
+        return LibrarySnapshot.load(snapshotFile(), musicDir);
+    }
+
+    /** Snapshot if there is one for this folder, otherwise a full scan. */
     public static Library load(Path musicDir, LibraryScanner.Progress progress) throws IOException {
+        LibrarySnapshot.Loaded snap = loadSnapshot(musicDir);
+        return snap != null ? snap.library() : scan(musicDir, progress);
+    }
+
+    /** Walks the folder (tags and lyrics from their caches where unchanged), then saves caches + snapshot. */
+    public static Library scan(Path musicDir, LibraryScanner.Progress progress) throws IOException {
         TagCache cache = TagCache.load(tagCacheFile());
-        LibraryScanner scanner = new LibraryScanner(new TagReader(onPath("ffprobe")), cache);
+        LyricsCache lyrics = LyricsCache.load(lyricsCacheFile());
+        LibraryScanner scanner = new LibraryScanner(new TagReader(onPath("ffprobe")), cache, lyrics);
         Library lib = scanner.scan(musicDir, progress);
         try {
             cache.save(tagCacheFile());
+            lyrics.save(lyricsCacheFile());
+            LibrarySnapshot.save(lib, snapshotFile());
         } catch (IOException e) {
-            System.err.println("bloombox: could not write tag cache: " + e.getMessage());
+            System.err.println("bloombox: could not write library cache: " + e.getMessage());
         }
         return lib;
     }

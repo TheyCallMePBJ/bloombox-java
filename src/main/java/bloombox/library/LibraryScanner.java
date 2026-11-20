@@ -24,7 +24,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Walks a music directory, reads tags (with caching) and parses .lrc lyrics.
+ * Walks a music directory, reads tags and lyrics (both cached by size + mtime).
  *
  * <p>Edge cases handled: missing / non-directory root, unreadable subdirectories,
  * symlink loops, two paths resolving to the same file, hidden files and folders,
@@ -41,11 +41,24 @@ public final class LibraryScanner {
 
     private final TagReader tagReader;
     private final TagCache cache;
+    private final LyricsCache lyricsCache;
 
     public LibraryScanner(TagReader tagReader, TagCache cache) {
+        this(tagReader, cache, null);
+    }
+
+    public LibraryScanner(TagReader tagReader, TagCache cache, LyricsCache lyricsCache) {
         this.tagReader = tagReader;
         this.cache = cache == null ? TagCache.emptyCache() : cache;
+        this.lyricsCache = lyricsCache == null ? LyricsCache.emptyCache() : lyricsCache;
     }
+
+    public LyricsCache lyricsCache() {
+        return lyricsCache;
+    }
+
+    /** Size + mtime (and identity) of a file as reported by the directory walk. */
+    private record Stat(long size, long mtime) {}
 
     public TagCache cache() {
         return cache;
@@ -61,7 +74,10 @@ public final class LibraryScanner {
 
         List<String> warnings = Collections.synchronizedList(new ArrayList<>());
         int[] symlinkDupes = {0};
-        Map<Path, Path> realToPath = new LinkedHashMap<>();
+        // Everything below is taken from the walk's own attributes: on a network share every
+        // extra stat / realpath / exists check is a round trip per file.
+        Map<Object, Path> identityToPath = new LinkedHashMap<>(); // file key (dev+inode) → first path
+        Map<Path, Stat> stats = new java.util.HashMap<>();         // every regular file seen
 
         Files.walkFileTree(root, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE,
                 new SimpleFileVisitor<>() {
@@ -77,13 +93,19 @@ public final class LibraryScanner {
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                         if (!attrs.isRegularFile()) return FileVisitResult.CONTINUE;
                         String n = file.getFileName().toString();
-                        if (n.startsWith(".") || Track.formatOf(file) == null) return FileVisitResult.CONTINUE;
-                        try {
-                            Path real = file.toRealPath();
-                            if (realToPath.putIfAbsent(real, file) != null) symlinkDupes[0]++;
-                        } catch (IOException e) {
-                            warn(warnings, "cannot resolve " + file + ": " + e.getMessage());
+                        if (n.startsWith(".")) return FileVisitResult.CONTINUE;
+                        stats.put(file, new Stat(attrs.size(), attrs.lastModifiedTime().toMillis()));
+                        if (Track.formatOf(file) == null) return FileVisitResult.CONTINUE;
+                        Object identity = attrs.fileKey();
+                        if (identity == null) { // filesystem without inode keys: fall back to realpath
+                            try {
+                                identity = file.toRealPath();
+                            } catch (IOException e) {
+                                warn(warnings, "cannot resolve " + file + ": " + e.getMessage());
+                                identity = file;
+                            }
                         }
+                        if (identityToPath.putIfAbsent(identity, file) != null) symlinkDupes[0]++;
                         return FileVisitResult.CONTINUE;
                     }
 
@@ -95,7 +117,7 @@ public final class LibraryScanner {
                     }
                 });
 
-        List<Path> files = new ArrayList<>(realToPath.values());
+        List<Path> files = new ArrayList<>(identityToPath.values());
         int total = files.size();
         AtomicInteger done = new AtomicInteger();
         AtomicInteger fromCache = new AtomicInteger(), fromTags = new AtomicInteger(),
@@ -113,8 +135,8 @@ public final class LibraryScanner {
         for (Path f : files) {
             futures.add(pool.submit(() -> {
                 try {
-                    long size = Files.size(f);
-                    long mtime = Files.getLastModifiedTime(f).toMillis();
+                    Stat st = stats.get(f);
+                    long size = st.size(), mtime = st.mtime();
                     TagReader.Tags tags = cache.lookup(f, size, mtime);
                     if (tags != null) {
                         fromCache.incrementAndGet();
@@ -131,14 +153,21 @@ public final class LibraryScanner {
                         }
                     }
                     // lyrics source order: .lrc → .txt → lyrics embedded in the audio file's tags
-                    Path lrc = Track.findLyricsFile(f);
+                    Path lrc = lyricsSibling(f, stats);
                     Lyrics lyrics = Lyrics.EMPTY;
                     if (lrc != null) {
-                        try {
-                            lyrics = LrcParser.parse(lrc);
-                        } catch (IOException e) {
-                            lyricErrors.incrementAndGet();
-                            warn(warnings, "unreadable lyrics " + lrc + ": " + e.getMessage());
+                        Stat ls = stats.get(lrc);
+                        Lyrics cached = lyricsCache.lookup(lrc, ls.size(), ls.mtime());
+                        if (cached != null) {
+                            lyrics = cached;
+                        } else {
+                            try {
+                                lyrics = LrcParser.parse(lrc);
+                                lyricsCache.put(lrc, ls.size(), ls.mtime(), lyrics);
+                            } catch (IOException e) {
+                                lyricErrors.incrementAndGet();
+                                warn(warnings, "unreadable lyrics " + lrc + ": " + e.getMessage());
+                            }
                         }
                     }
                     if (lyrics.isEmpty() && !tags.lyrics().isBlank()) {
@@ -150,8 +179,8 @@ public final class LibraryScanner {
                     Track t = new Track(-1, f, tags.title(), tags.artist(), tags.album(),
                             tags.trackNo(), tags.discNo(), tags.durationMs(), lrc);
                     return new Scanned(t, lyrics);
-                } catch (IOException e) {
-                    warn(warnings, "skipped " + f + ": " + e.getMessage());
+                } catch (RuntimeException e) {
+                    warn(warnings, "skipped " + f + ": " + e);
                     return null;
                 } finally {
                     if (progress != null) progress.update(done.incrementAndGet(), total);
@@ -178,9 +207,13 @@ public final class LibraryScanner {
             }
         }
 
-        Set<String> keep = new HashSet<>();
-        for (Track t : tracks) keep.add(t.path().toString());
+        Set<String> keep = new HashSet<>(), keepLyrics = new HashSet<>();
+        for (Track t : tracks) {
+            keep.add(t.path().toString());
+            if (t.lyricsPath() != null) keepLyrics.add(t.lyricsPath().toString());
+        }
         cache.retainOnly(keep);
+        lyricsCache.retainOnly(keepLyrics);
 
         Library lib = Library.of(root, tracks, lyrics);
         int likelyDupes = countLikelyDuplicates(lib.tracks());
@@ -188,6 +221,18 @@ public final class LibraryScanner {
                 fromFfprobe.get(), fromName.get(), withLyrics.get(), lyricErrors.get(), likelyDupes,
                 List.copyOf(warnings), (System.nanoTime() - t0) / 1_000_000);
         return lib.withReport(report);
+    }
+
+    /** Sibling lyrics file seen by the walk: .lrc preferred over .txt (like {@link Track#findLyricsFile}). */
+    private static Path lyricsSibling(Path audio, Map<Path, Stat> seen) {
+        String name = audio.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        String base = dot < 0 ? name : name.substring(0, dot);
+        for (String ext : new String[]{".lrc", ".LRC", ".txt", ".TXT"}) {
+            Path p = audio.resolveSibling(base + ext);
+            if (seen.containsKey(p)) return p;
+        }
+        return null;
     }
 
     /** Same normalised artist + album + title as another track (e.g. a FLAC and an MP3 copy). */
