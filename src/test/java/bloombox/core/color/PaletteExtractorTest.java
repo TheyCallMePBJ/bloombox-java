@@ -30,20 +30,22 @@ class PaletteExtractorTest {
     @Test
     void solidColourCoverGivesThatHue() {
         PaletteExtractor.Palette p = PaletteExtractor.extract(image(new int[]{0xc02020}, new int[]{500}), 1);
-        assertTrue(p.vivid());
+        assertEquals(PaletteExtractor.Kind.VIVID, p.kind());
         assertEquals(Lab.hue(Lab.fromRgb(0xc02020)), Lab.hue(Lab.fromRgb(p.accent())), 1.0);
         assertEquals(1, p.clustering().swatches().size(), "one distinct colour → one cluster");
         assertEquals(-1, p.secondary(), "no second hue available");
     }
 
     @Test
-    void greyscaleCoverIsNotVivid() {
+    void greyscaleCoverIsMonochromeNotRejected() {
         int[] px = new int[1000];
         for (int i = 0; i < px.length; i++) {
             int v = i % 256;
             px[i] = (v << 16) | (v << 8) | v;
         }
-        assertFalse(PaletteExtractor.extract(px, 7).vivid());
+        PaletteExtractor.Palette p = PaletteExtractor.extract(px, 7);
+        assertEquals(PaletteExtractor.Kind.MONO, p.kind(), "greyscale still yields a palette");
+        assertTrue(Lab.fromRgb(p.accent())[0] > 70, "built from the lightest grey");
     }
 
     @Test
@@ -51,7 +53,7 @@ class PaletteExtractorTest {
         // 80% dark grey background, 20% saturated orange: the accent must be the orange
         int[] px = image(new int[]{0x202022, 0xff8800}, new int[]{800, 200});
         PaletteExtractor.Palette p = PaletteExtractor.extract(px, 3);
-        assertTrue(p.vivid());
+        assertEquals(PaletteExtractor.Kind.VIVID, p.kind());
         assertTrue(Lab.hueDistance(Lab.hue(Lab.fromRgb(0xff8800)), Lab.hue(Lab.fromRgb(p.accent()))) < 5);
     }
 
@@ -104,6 +106,36 @@ class PaletteExtractorTest {
         assertThrows(IllegalArgumentException.class, () -> PaletteExtractor.cluster(new int[]{1}, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> PaletteExtractor.cluster(new int[]{1}, 65, 0));
         assertTrue(PaletteExtractor.cluster(new int[0], 3, 0).swatches().isEmpty());
-        assertFalse(PaletteExtractor.extract(new int[0], 0).vivid(), "empty image → default theme");
+        assertEquals(PaletteExtractor.Kind.NONE, PaletteExtractor.extract(new int[0], 0).kind(), "empty image → fallback");
+    }
+
+    @Test
+    void smallColourPatchOnMutedCoverBecomesAccent() {
+        // shaped like Alter Bridge's "Blackbird": black, white, blue-greys, a 2.5% dark-red patch
+        int[] px = image(new int[]{0x07080a, 0xeceff2, 0xaab9c1, 0x6e8088, 0x313d43, 0x5a1c19},
+                new int[]{364, 257, 134, 113, 107, 25});
+        PaletteExtractor.Palette p = PaletteExtractor.extract(px, 1);
+        assertEquals(PaletteExtractor.Kind.VIVID, p.kind());
+        assertTrue(Lab.hueDistance(Lab.hue(Lab.fromRgb(0x5a1c19)), Lab.hue(Lab.fromRgb(p.accent()))) < 10, "red accent");
+        assertTrue(p.secondary() >= 0, "blue-grey secondary");
+        assertTrue(Lab.hueDistance(240, Lab.hue(Lab.fromRgb(p.secondary()))) < 20);
+        assertTrue(Lab.hueDistance(240, p.baseHue()) < 20, "backgrounds tinted cool");
+    }
+
+    @Test
+    void mutedOnlyCoverGetsMutedAccent() {
+        int[] px = image(new int[]{0x6e8088, 0x20262a, 0xd0d4d8}, new int[]{400, 400, 200}); // steel blue tones
+        PaletteExtractor.Palette p = PaletteExtractor.extract(px, 2);
+        assertEquals(PaletteExtractor.Kind.MUTED, p.kind());
+        assertTrue(Lab.hueDistance(Lab.hue(Lab.fromRgb(0x6e8088)), Lab.hue(Lab.fromRgb(p.accent()))) < 15);
+    }
+
+    @Test
+    void faintTintCoverIsMutedWithThatHue() {
+        // near-grey but consistently warm (chroma ~4): previously fell back to the default theme
+        int[] px = image(new int[]{0x8a8580, 0x3a3734, 0xd8d3ce}, new int[]{400, 400, 200});
+        PaletteExtractor.Palette p = PaletteExtractor.extract(px, 4);
+        assertEquals(PaletteExtractor.Kind.MUTED, p.kind());
+        assertTrue(Lab.hueDistance(Lab.hue(Lab.fromRgb(0x8a8580)), Lab.hue(Lab.fromRgb(p.accent()))) < 25);
     }
 }

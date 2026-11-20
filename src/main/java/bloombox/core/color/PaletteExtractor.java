@@ -15,11 +15,13 @@ import java.util.Random;
  * mean of its pixels, repeat until no assignment changes (or {@link #MAX_ITERATIONS}).
  * Cost: O(n·k·iterations) for n sampled pixels.
  *
- * <p>Then the clusters are scored: the accent is the cluster with the best mix of
- * colourfulness (chroma) and coverage (√share), with a penalty for very dark or very light
- * colours; the secondary accent is the best cluster whose hue differs by at least
- * {@link #MIN_HUE_GAP}°. Covers with no colourful cluster (black-and-white art) are
- * reported as not {@code vivid}, so the caller can keep its default theme.
+ * <p>Then the clusters are scored by colourfulness (chroma) × coverage (√share), with a
+ * penalty for very dark or very light colours. The accent is the best <em>colourful</em>
+ * cluster (chroma ≥ {@link #VIVID_CHROMA}, ≥ 1% of the cover), so a small coloured detail
+ * on a mostly grey cover still wins; failing that, the strongest muted tint
+ * (chroma ≥ {@link #MUTED_CHROMA}); failing that (greyscale art) a monochrome palette from
+ * the lightest grey. So every non-empty image yields a palette. The secondary accent is the
+ * best cluster whose hue differs by at least {@link #MIN_HUE_GAP}°.
  *
  * <p>Reproducibility: the same pixels and seed always give the same palette.
  */
@@ -29,8 +31,23 @@ public final class PaletteExtractor {
     public static final int DEFAULT_K = 6;
     public static final int MAX_ITERATIONS = 30;
     public static final double MIN_HUE_GAP = 45;
-    /** Below this chroma a colour reads as grey. */
+    /** At or above this chroma a colour reads as clearly colourful. */
     public static final double VIVID_CHROMA = 15;
+    /** Below this chroma a colour is plain grey (hue is noise); between the two it is a muted tint. */
+    public static final double MUTED_CHROMA = 3;
+    static final double MIN_ACCENT_SHARE = 0.01;
+
+    /** How much colour the cover offered. */
+    public enum Kind {
+        /** a clearly colourful area exists */
+        VIVID,
+        /** only faint tints: accent is the strongest one */
+        MUTED,
+        /** plain greyscale: accent is the lightest grey, no hue */
+        MONO,
+        /** no pixels */
+        NONE
+    }
 
     /** One cluster: centroid colour and the fraction of pixels in it. */
     public record Swatch(int rgb, double[] lab, double share) {
@@ -51,9 +68,9 @@ public final class PaletteExtractor {
      * @param secondary  secondary accent, or -1 if no cluster is far enough in hue
      * @param baseHue    hue of the dominant colourful area (for tinting backgrounds)
      * @param baseChroma that area's chroma (0 for grey covers)
-     * @param vivid      false if the art has no colourful cluster
+     * @param kind       how colourful the art is; see {@link Kind}
      */
-    public record Palette(int accent, int secondary, double baseHue, double baseChroma, boolean vivid,
+    public record Palette(int accent, int secondary, double baseHue, double baseChroma, Kind kind,
                           Clustering clustering) {}
 
     /** Clusters 0xRRGGBB pixels into at most {@code k} colours. */
@@ -148,39 +165,51 @@ public final class PaletteExtractor {
     }
 
     public static Palette fromClustering(Clustering cl) {
-        Swatch accent = null;
-        double best = -1;
-        for (Swatch s : cl.swatches()) {
-            if (s.share() < 0.02) continue; // specks
-            double sc = score(s);
-            if (sc > best) {
-                best = sc;
-                accent = s;
+        if (cl.swatches().isEmpty()) return new Palette(-1, -1, 0, 0, Kind.NONE, cl);
+        // 1) accent from colourful clusters only, even small ones: a red patch on a grey cover
+        //    is exactly the colour that should theme it
+        Swatch accent = best(cl, null, VIVID_CHROMA, MIN_ACCENT_SHARE);
+        Kind kind = Kind.VIVID;
+        // 2) no colourful area: the strongest tint the cover has, however faint
+        if (accent == null) {
+            accent = best(cl, null, MUTED_CHROMA, MIN_ACCENT_SHARE);
+            kind = Kind.MUTED;
+        }
+        // 3) plain greyscale: monochrome, built from the lightest sizeable cluster
+        if (accent == null) {
+            Swatch light = cl.swatches().get(0);
+            for (Swatch s : cl.swatches()) {
+                if (s.share() >= MIN_ACCENT_SHARE && s.lab()[0] > light.lab()[0]) light = s;
             }
+            return new Palette(light.rgb(), -1, 0, 0, Kind.MONO, cl);
         }
-        if (accent == null || accent.chroma() < VIVID_CHROMA) {
-            return new Palette(-1, -1, 0, 0, false, cl);
-        }
-        Swatch second = null;
-        double best2 = -1;
-        for (Swatch s : cl.swatches()) {
-            if (s == accent || s.share() < 0.02 || s.chroma() < VIVID_CHROMA * 0.8) continue;
-            if (Lab.hueDistance(s.hue(), accent.hue()) < MIN_HUE_GAP) continue;
-            double sc = score(s);
-            if (sc > best2) {
-                best2 = sc;
-                second = s;
-            }
-        }
+        // secondary: best other cluster with a clearly different hue (muted ones allowed)
+        Swatch second = best(cl, accent, MUTED_CHROMA, MIN_ACCENT_SHARE);
         // background tint: the largest area that has any colour at all
         Swatch base = accent;
         for (Swatch s : cl.swatches()) {
-            if (s.chroma() >= 6) {
+            if (s.chroma() >= MUTED_CHROMA) {
                 base = s;
                 break;
             }
         }
-        return new Palette(accent.rgb(), second == null ? -1 : second.rgb(), base.hue(), base.chroma(), true, cl);
+        return new Palette(accent.rgb(), second == null ? -1 : second.rgb(), base.hue(), base.chroma(), kind, cl);
+    }
+
+    /** Highest-scoring swatch with chroma ≥ minChroma and share ≥ minShare (hue-separated from {@code avoid}). */
+    private static Swatch best(Clustering cl, Swatch avoid, double minChroma, double minShare) {
+        Swatch best = null;
+        double bestScore = -1;
+        for (Swatch s : cl.swatches()) {
+            if (s == avoid || s.share() < minShare || s.chroma() < minChroma) continue;
+            if (avoid != null && Lab.hueDistance(s.hue(), avoid.hue()) < MIN_HUE_GAP) continue;
+            double sc = score(s);
+            if (sc > bestScore) {
+                bestScore = sc;
+                best = s;
+            }
+        }
+        return best;
     }
 
     /** chroma × √share, penalising colours far from mid lightness. */

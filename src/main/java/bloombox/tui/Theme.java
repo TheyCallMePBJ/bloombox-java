@@ -43,17 +43,34 @@ final class Theme {
             PaletteExtractor.Palette p = PaletteExtractor.extract(px, java.util.Arrays.hashCode(px));
             String work = "k-means++: " + p.clustering().swatches().size() + " clusters, "
                     + p.clustering().iterations() + " iterations";
-            if (!p.vivid()) return withDescription(fallback, "grey cover, " + fallback.description() + " · " + work);
-            return fromPalette(p, (p.muted() ? "muted · " : "") + work);
+            return switch (p.kind()) {
+                case NONE -> withDescription(fallback, fallback.description());
+                case MONO -> monochrome(p.accent(), "monochrome · " + work);
+                case MUTED -> fromPalette(p, "muted · " + work);
+                case VIVID -> fromPalette(p, work);
+            };
+        }
+
+        /** Greyscale cover: neutral (hue-less) surfaces and silver accents. */
+        static Scheme monochrome(int lightest, String description) {
+            double l = Lab.fromRgb(lightest)[0];
+            int accent = Lab.fromLch(Math.max(80, Math.min(90, l)), 0, 0);
+            int accent2 = Lab.fromLch(68, 0, 0);
+            Scheme d = DEFAULT;
+            int panel = tint(d.panel(), 0, 0);
+            return new Scheme(tint(d.bg(), 0, 0), panel, tint(d.stripe(), 0, 0), tint(d.bar(), 0, 0),
+                    mixRgb(panel, accent, 0.16), tint(d.border(), 0, 0),
+                    accent, mixRgb(panel, accent, 0.5), accent2, description);
         }
 
         static Scheme fromPalette(PaletteExtractor.Palette p, String description) {
-            int accent = p.muted()
+            boolean muted = p.kind() == PaletteExtractor.Kind.MUTED;
+            int accent = muted
                     ? PaletteExtractor.readable(p.accent(), 72, 84, 16, 30)  // keep a muted cover muted
                     : PaletteExtractor.readable(p.accent(), 70, 82, 32, 62);
             int accent2 = p.secondary() >= 0
                     ? PaletteExtractor.readable(p.secondary(), 74, 84, 24, 50)
-                    : Lab.fromLch(80, 34, (Lab.hue(Lab.fromRgb(accent)) + 150) % 360); // split-complement
+                    : Lab.fromLch(80, muted ? 20 : 34, (Lab.hue(Lab.fromRgb(accent)) + 150) % 360); // split-complement
             double hue = p.baseHue();
             double c = Math.min(p.baseChroma(), 40) / 40.0; // how much tint the cover can carry
             Scheme d = DEFAULT;
@@ -71,7 +88,7 @@ final class Theme {
                     description);
         }
 
-        private static Scheme withDescription(Scheme s, String d) {
+        static Scheme withDescription(Scheme s, String d) {
             return new Scheme(s.bg, s.panel, s.stripe, s.bar, s.select, s.border, s.accent, s.accentDim, s.accent2, d);
         }
 
@@ -90,7 +107,7 @@ final class Theme {
             java.util.List<PaletteExtractor.Swatch> equal = new java.util.ArrayList<>();
             for (PaletteExtractor.Swatch x : sw) equal.add(new PaletteExtractor.Swatch(x.rgb(), x.lab(), 1.0 / sw.size()));
             PaletteExtractor.Palette p = PaletteExtractor.fromClustering(new PaletteExtractor.Clustering(equal, 0, 0));
-            if (!p.vivid()) return DEFAULT; // all-grey terminal palette
+            if (p.kind() == PaletteExtractor.Kind.MONO || p.kind() == PaletteExtractor.Kind.NONE) return DEFAULT; // all-grey palette
             int accent = PaletteExtractor.readable(p.accent(), 60, 95, 0, 200);
             int accent2 = p.secondary() >= 0 ? PaletteExtractor.readable(p.secondary(), 60, 95, 0, 200) : DEFAULT.accent2();
             Scheme d = DEFAULT;

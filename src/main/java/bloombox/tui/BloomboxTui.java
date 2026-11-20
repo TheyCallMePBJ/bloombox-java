@@ -9,6 +9,7 @@ import bloombox.index.SearchReport;
 import bloombox.index.SearchResult;
 import bloombox.library.Library;
 import bloombox.library.LibraryLoader;
+import bloombox.library.LibrarySnapshot;
 import bloombox.library.Lyrics;
 import bloombox.library.Track;
 import bloombox.mpris.MprisService;
@@ -133,7 +134,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
             kitty = KittyImages.detect(settings.get(Settings.ART_MODE, "auto"));
             startVisualizer();
             if (settings.musicDir().isPresent()) {
-                startScan(settings.musicDir().get());
+                startLoad(settings.musicDir().get(), false);
             } else {
                 openSettings();
                 flash("Welcome! Set your music folder to get started.", Theme.ACCENT2);
@@ -248,19 +249,28 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     // =========================================================== library loading
 
-    private void startScan(Path dir) {
+    /**
+     * Loads the library in the background. Without {@code rescan}, the snapshot saved by the
+     * last scan is used and the music folder is not touched (start-up stays fast even on a
+     * network share); a scan only happens if there is no snapshot for this folder, when the
+     * folder changes, or on request (F5 / Settings → Rescan).
+     */
+    private void startLoad(Path dir, boolean rescan) {
         if (scanProgress != null) return;
-        scanProgress = "scanning…";
+        scanProgress = rescan ? "scanning…" : "loading…";
         Thread t = new Thread(() -> {
             try {
-                Library lib = LibraryLoader.load(dir, (done, total) -> {
+                LibrarySnapshot.Loaded snap = rescan ? null : LibraryLoader.loadSnapshot(dir);
+                Library lib = snap != null ? snap.library() : LibraryLoader.scan(dir, (done, total) -> {
                     scanProgress = "scanning " + done + "/" + total;
                     dirty = true;
                 });
                 scanProgress = "indexing " + lib.size() + " tracks…";
                 dirty = true;
                 SearchIndex idx = SearchIndex.build(lib);
-                post(() -> installLibrary(lib, idx));
+                String msg = snap == null ? lib.report().summary()
+                        : lib.size() + " tracks · library from " + ago(snap.scannedAtMs()) + " · F5 to rescan";
+                post(() -> installLibrary(lib, idx, msg, snap == null && lib.report().fromFilename() > 0));
             } catch (Exception e) {
                 post(() -> {
                     scanProgress = null;
@@ -272,7 +282,15 @@ public final class BloomboxTui implements PlaybackController.Listener {
         t.start();
     }
 
-    private void installLibrary(Library lib, SearchIndex idx) {
+    private static String ago(long whenMs) {
+        long min = Math.max(0, (System.currentTimeMillis() - whenMs) / 60_000);
+        if (min < 1) return "just now";
+        if (min < 60) return min + " min ago";
+        if (min < 48 * 60) return (min / 60) + " h ago";
+        return (min / (24 * 60)) + " days ago";
+    }
+
+    private void installLibrary(Library lib, SearchIndex idx, String message, boolean warn) {
         library = lib;
         index = idx;
         ctl.setLibrary(lib);
@@ -287,7 +305,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         libList.selected = 0;
         libList.offset = 0;
         runSearch();
-        flash(lib.report().summary(), lib.report().fromFilename() > 0 ? Theme.WARN : Theme.GOOD);
+        flash(message, warn ? Theme.WARN : Theme.GOOD);
     }
 
     // =========================================================== search
@@ -442,6 +460,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
             }
             case F1 -> overlay = Overlay.HELP;
             case F2 -> showAlgo = !showAlgo;
+            case F5 -> settings.musicDir().ifPresentOrElse(d -> startLoad(d, true),
+                    () -> flash("Set a music folder first (o)", Theme.WARN));
             case F10 -> openSettings();
             default -> { }
         }
@@ -510,7 +530,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 }
                 return true;
             }
-            case ArrowUp, ArrowDown, PageUp, PageDown, F1, F2, F10 -> {
+            case ArrowUp, ArrowDown, PageUp, PageDown, F1, F2, F5, F10 -> {
                 return false; // navigate results / toggle panels while typing
             }
             default -> {
@@ -593,7 +613,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 settingsEditing = false;
                 settings.setMusicDir(dir);
                 saveSettings();
-                startScan(dir);
+                startLoad(dir, true);
             } else {
                 settingsEdit.handle(k);
             }
@@ -641,7 +661,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 saveSettings();
             }
             case 5 -> settings.musicDir().ifPresentOrElse(d -> {
-                startScan(d);
+                startLoad(d, true);
                 overlay = Overlay.NONE;
             }, () -> flash("Set a music folder first", Theme.WARN));
             default -> { }
@@ -1129,7 +1149,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Tab  1  2", "switch Library / Queue"},
                 {"l", "locate the playing track"},
                 {"F2  i", "algorithm panel (trie / Bloom / KMP stats)"},
-                {"o  F10", "settings (music folder, art, visualizer)"},
+                {"o  F10", "settings (music folder, art, visualizer, theme)"},
+                {"F5", "rescan the music folder (start-up uses the saved library)"},
                 {"q  Ctrl+C", "quit"},
                 {"", ""},
                 {"search syntax", "blue mon · artist:daft · al:disc · l:love · \"exact phrase\""},

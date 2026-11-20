@@ -203,4 +203,16 @@ class TuiHelpersTest {
         for (int slot : TerminalPalette.ACCENT_SLOTS) grey.put(slot, 0x808080);
         assertEquals(Theme.Scheme.DEFAULT, Theme.Scheme.fromTerminal(grey, "x"), "all-grey palette → built-in");
     }
+
+    @Test
+    void greyscaleCoverGetsMonochromeSchemeNotFallback() {
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(32, 32, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < 32; y++) for (int x = 0; x < 32; x++) img.setRGB(x, y, ((x + y) & 4) == 0 ? 0xeeeeee : 0x333333);
+        Theme.Scheme s = Theme.Scheme.fromCover(img);
+        assertTrue(s.description().startsWith("monochrome"), s.description());
+        double[] acc = bloombox.core.color.Lab.fromRgb(s.accent());
+        assertTrue(bloombox.core.color.Lab.chroma(acc) < 1.5, "silver accent");
+        assertTrue(acc[0] >= 79);
+        assertNotEquals(Theme.Scheme.DEFAULT.accent(), s.accent());
+    }
 }
