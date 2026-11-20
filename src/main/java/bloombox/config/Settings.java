@@ -20,7 +20,7 @@ public final class Settings {
     public static final String VOLUME = "player.volume";
     public static final String ART_MODE = "ui.art";          // auto | kitty | blocks | off
     public static final String VISUALIZER = "ui.visualizer"; // spectrum | off
-    public static final String SEEKBAR = "ui.seekbar";       // wave | bars | line
+    public static final String SEEKBAR = "ui.seekbar";       // wave | line
     public static final String THEME = "ui.theme";           // cover | static
     public static final String LYRIC_JUMP = "search.lyric_jump";  // off | on: lyric-only hits start at the line
     public static final String REPLAYGAIN = "player.replaygain";               // off | track | album
