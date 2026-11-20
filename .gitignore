@@ -4,3 +4,6 @@ target/
 *.iml
 .vscode/
 bench-results/
+.classpath
+.project
+.settings/

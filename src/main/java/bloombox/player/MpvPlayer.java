@@ -66,6 +66,11 @@ public final class MpvPlayer implements AudioBackend, Closeable {
      * @throws IOException if mpv is not installed or the socket never appears
      */
     public static MpvPlayer start(int initialVolume) throws IOException {
+        return start(initialVolume, ReplayGain.DISABLED);
+    }
+
+    /** Starts mpv with the given volume and ReplayGain settings already applied. */
+    public static MpvPlayer start(int initialVolume, ReplayGain replayGain) throws IOException {
         Path runtime = runtimeDir();
         Files.createDirectories(runtime);
         Path sock = runtime.resolve("mpv-" + ProcessHandle.current().pid() + ".sock");
@@ -73,11 +78,13 @@ public final class MpvPlayer implements AudioBackend, Closeable {
 
         Process p;
         try {
-            p = new ProcessBuilder(
+            java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(
                     "mpv", "--idle=yes", "--no-video", "--no-terminal", "--no-config",
                     "--audio-display=no", "--gapless-audio=weak",
                     "--volume=" + initialVolume, "--volume-max=130",
-                    "--input-ipc-server=" + sock)
+                    "--input-ipc-server=" + sock));
+            cmd.addAll(replayGain.mpvArgs());
+            p = new ProcessBuilder(cmd)
                     .redirectErrorStream(true)
                     .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                     .start();
@@ -151,6 +158,12 @@ public final class MpvPlayer implements AudioBackend, Closeable {
 
     public void seekRelative(double seconds) {
         command("seek", seconds, "relative");
+    }
+
+    /** Changes ReplayGain mode / pre-amp; mpv re-applies it to the playing file immediately. */
+    public void setReplayGain(ReplayGain rg) {
+        command("set_property", "replaygain", rg.mode().mpvValue);
+        command("set_property", "replaygain-preamp", rg.preampDb());
     }
 
     public void setVolume(double v) {

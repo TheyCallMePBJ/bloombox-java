@@ -162,7 +162,7 @@ public final class Main {
             if (ids.isEmpty()) fail("no matches for: " + String.join(" ", words));
         }
 
-        MpvPlayer mpv = MpvPlayer.start(settings.volume());
+        MpvPlayer mpv = MpvPlayer.start(settings.volume(), settings.replayGain());
         PlaybackController ctl = new PlaybackController(lib, mpv);
         CountDownLatch quit = new CountDownLatch(1);
         MprisService mpris = new MprisService(ctl, t -> null, quit::countDown);
@@ -267,7 +267,8 @@ public final class Main {
         System.out.printf("lyrics: %d lines (%s)%n", lyrics.lines().size(), lyrics.synced() ? "synced" : "unsynced");
 
         CountDownLatch done = new CountDownLatch(1);
-        try (MpvPlayer player = MpvPlayer.start(Settings.load().volume())) {
+        Settings st = Settings.load();
+        try (MpvPlayer player = MpvPlayer.start(st.volume(), st.replayGain())) {
             player.addListener(new MpvPlayer.Listener() {
                 int lastLine = -2;
 

@@ -22,6 +22,8 @@ public final class Settings {
     public static final String VISUALIZER = "ui.visualizer"; // cava | off
     public static final String SEEKBAR = "ui.seekbar";       // wave | bars | line
     public static final String THEME = "ui.theme";           // cover | static
+    public static final String REPLAYGAIN = "player.replaygain";               // off | track | album
+    public static final String REPLAYGAIN_PREAMP = "player.replaygain.preamp"; // dB, -12..+12
 
     private final Path file;
     private final Properties props = new Properties();
@@ -71,6 +73,21 @@ public final class Settings {
 
     public void setVolume(int v) {
         props.setProperty(VOLUME, Integer.toString(clamp(v, 0, 130)));
+    }
+
+    public bloombox.player.ReplayGain replayGain() {
+        double pre;
+        try {
+            pre = Double.parseDouble(props.getProperty(REPLAYGAIN_PREAMP, "0").strip());
+        } catch (NumberFormatException e) {
+            pre = 0;
+        }
+        return new bloombox.player.ReplayGain(bloombox.player.ReplayGain.Mode.parse(props.getProperty(REPLAYGAIN)), pre);
+    }
+
+    public void setReplayGain(bloombox.player.ReplayGain rg) {
+        props.setProperty(REPLAYGAIN, rg.mode().label());
+        props.setProperty(REPLAYGAIN_PREAMP, Double.toString(rg.preampDb()));
     }
 
     public String get(String key, String def) {

@@ -16,6 +16,7 @@ import bloombox.mpris.MprisService;
 import bloombox.player.MpvPlayer;
 import bloombox.player.PlayQueue;
 import bloombox.player.PlaybackController;
+import bloombox.player.ReplayGain;
 import com.googlecode.lanterna.SGR;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
@@ -109,7 +110,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         PrintStream originalErr = System.err;
         System.setErr(new PrintStream(Files.newOutputStream(log), true)); // keep stray output off the screen
 
-        mpv = MpvPlayer.start(settings.volume());
+        mpv = MpvPlayer.start(settings.volume(), settings.replayGain());
         ctl = new PlaybackController(library, mpv);
         ctl.addListener(this);
         mpris = new MprisService(ctl, art::cachedArtFile, () -> post(() -> running = false));
@@ -594,7 +595,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private static final String[] ART_MODES = {"auto", "kitty", "blocks", "off"};
     private static final String[] VIZ_MODES = {"cava", "off"};
-    private static final int SETTINGS_ROWS = 6;
+    private static final int SETTINGS_ROWS = 8;
+    private static final String[] RG_MODES = {"off", "track", "album"};
 
     private void openSettings() {
         overlay = Overlay.SETTINGS;
@@ -665,12 +667,27 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 settings.set(Settings.THEME, cycle(THEME_MODES, settings.get(Settings.THEME, "cover"), dir));
                 saveSettings();
             }
-            case 5 -> settings.musicDir().ifPresentOrElse(d -> {
+            case 5 -> {
+                ReplayGain rg = settings.replayGain();
+                ReplayGain next = rg.withMode(ReplayGain.Mode.parse(cycle(RG_MODES, rg.mode().label(), dir)));
+                applyReplayGain(next);
+            }
+            case 6 -> { // pre-amp: ←/→ step 1 dB (Enter/Space = +1), clamped to ±12
+                ReplayGain rg = settings.replayGain();
+                applyReplayGain(rg.withPreamp(Math.rint(rg.preampDb()) + dir));
+            }
+            case 7 -> settings.musicDir().ifPresentOrElse(d -> {
                 startLoad(d, true);
                 overlay = Overlay.NONE;
             }, () -> flash("Set a music folder first", Theme.WARN));
             default -> { }
         }
+    }
+
+    private void applyReplayGain(ReplayGain rg) {
+        settings.setReplayGain(rg);
+        saveSettings();
+        if (mpv != null) mpv.setReplayGain(rg); // takes effect on the playing track right away
     }
 
     private static String cycle(String[] values, String current, int dir) {
@@ -1138,8 +1155,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
         String icon = st == PlaybackController.Status.PLAYING ? "▶" : st == PlaybackController.Status.PAUSED ? "‖" : "■";
         cv.text(1, sy, icon, 2, st == PlaybackController.Status.STOPPED ? Theme.FAINT : Theme.ACCENT, Theme.BAR, SGR.BOLD);
 
-        String right = String.format("%s / %s   vol %d%%   %s %s",
-                Canvas.time(pos), Canvas.time(dur), Math.round(ctl.volume()),
+        ReplayGain rg = settings.replayGain();
+        String rgLabel = !rg.enabled() ? "" : "   rg " + rg.mode().label()
+                + (rg.preampDb() != 0 ? " " + ReplayGain.formatDb(rg.preampDb()).replace(" ", "") : "");
+        String right = String.format("%s / %s   vol %d%%%s   %s %s",
+                Canvas.time(pos), Canvas.time(dur), Math.round(ctl.volume()), rgLabel,
                 ctl.shuffle() ? "⇄ shuffle" : "⇄ ·", repeatLabel(ctl.repeat()));
         int rw = Canvas.width(right);
         cv.textRight(w - 1, sy, right, rw, Theme.DIM, Theme.BAR);
@@ -1175,7 +1195,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Tab  1  2", "switch Library / Queue"},
                 {"l", "locate the playing track"},
                 {"F2  i", "algorithm panel (trie / Bloom / KMP stats)"},
-                {"o  F10", "settings (music folder, art, visualizer, theme)"},
+                {"o  F10", "settings (music folder, art, visualizer, theme, ReplayGain)"},
                 {"F5", "rescan the music folder (start-up uses the saved library)"},
                 {"q  Ctrl+C", "quit"},
                 {"", ""},
@@ -1191,7 +1211,9 @@ public final class BloomboxTui implements PlaybackController.Listener {
     }
 
     private void drawSettings(Canvas cv, int w, int h) {
-        int bw = Math.min(w - 4, 80), bh = 17;
+        // rows two lines apart when there is room, otherwise packed (minimum terminal height is 16)
+        int gap = h >= SETTINGS_ROWS * 2 + 6 ? 2 : 1;
+        int bw = Math.min(w - 4, 80), bh = (SETTINGS_ROWS - 1) * gap + 6;
         int bx = (w - bw) / 2, by = Math.max(1, (h - bh) / 2);
         cv.box(bx, by, bw, bh, "Settings", Theme.ACCENT_DIM, Theme.PANEL);
         String dir = settings.musicDir().map(Path::toString).orElse("(not set)");
@@ -1204,10 +1226,13 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Theme", "cover".equals(settings.get(Settings.THEME, "cover"))
                         ? "cover  (" + Theme.current().description() + ")"
                         : "static  (" + Theme.fallback().description() + ")"},
+                {"ReplayGain", replayGainDetail(settings.replayGain())},
+                {"Pre-amp", ReplayGain.formatDb(settings.replayGain().preampDb())
+                        + (settings.replayGain().enabled() ? "  (←/→ to adjust, ±12 dB)" : "  (ReplayGain is off)")},
                 {"Rescan library", scanProgress != null ? scanProgress : "press Enter"},
         };
         for (int i = 0; i < rows.length; i++) {
-            int y = by + 2 + i * 2;
+            int y = by + 2 + i * gap;
             boolean sel = i == settingsRow;
             TextColor bg = sel ? Theme.SELECT : Theme.PANEL;
             cv.fill(bx + 1, y, bw - 2, 1, bg);
@@ -1222,12 +1247,21 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 cv.ch(vx + Math.min(vw - 1, Canvas.width(visible)), y, ' ', Theme.BG, Theme.ACCENT);
                 if (shown < 0) return;
             } else {
-                cv.text(vx, y, rows[i][1], vw, i >= 1 && i <= 4 ? Theme.ACCENT2 : Theme.DIM, bg);
+                boolean inactive = i == 6 && !settings.replayGain().enabled();
+                cv.text(vx, y, rows[i][1], vw, inactive ? Theme.FAINT : i >= 1 && i <= 6 ? Theme.ACCENT2 : Theme.DIM, bg);
             }
         }
         String hint = settingsEditing ? "Enter save & scan · Esc cancel · Ctrl+U clear"
                 : "↑↓ select · Enter/←→ change · Esc close";
         cv.text(bx + 3, by + bh - 2, hint, bw - 6, Theme.FAINT, Theme.PANEL);
+    }
+
+    private static String replayGainDetail(ReplayGain rg) {
+        return switch (rg.mode()) {
+            case OFF -> "off";
+            case TRACK -> "track  (each song normalised on its own)";
+            case ALBUM -> "album  (keeps loudness differences within an album)";
+        };
     }
 
     private String artDetail() {
