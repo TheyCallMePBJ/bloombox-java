@@ -578,6 +578,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
             }
             return;
         }
+        if (lyricHit != null && x >= lyricHit.x() && x < lyricHit.x() + lyricHit.w()
+                && y >= lyricHit.y() && y < lyricHit.y() + lyricHit.h()) {
+            seekToLyricRow(lyricHit.top() + (y - lyricHit.y()));
+            return;
+        }
         if (y == waveY || y == waveY + 1) {
             double d = ctl.duration();
             int w = screen.getTerminalSize().getColumns() - 2;
@@ -653,7 +658,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 startVisualizer();
             }
             case 3 -> {
-                settings.set(Settings.SEEKBAR, cycle(Waveform.STYLES, settings.get(Settings.SEEKBAR, "wave"), dir));
+                settings.set(Settings.SEEKBAR, cycle(Waveform.STYLES, Waveform.style(settings.get(Settings.SEEKBAR, "wave")), dir));
                 saveSettings();
             }
             case 4 -> {
@@ -730,6 +735,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         int w = size.getColumns(), h = size.getRows();
         Canvas cv = new Canvas(screen.newTextGraphics(), w, h);
         cv.fill(0, 0, w, h, Theme.BG);
+        lyricHit = null; // set again only if synced lyrics are drawn this frame
         if (w < MIN_W || h < MIN_H) {
             cv.text(1, h / 2, "terminal too small (" + w + "×" + h + ", need " + MIN_W + "×" + MIN_H + ")",
                     w - 2, Theme.DIM, Theme.BG);
@@ -1057,7 +1063,26 @@ public final class BloomboxTui implements PlaybackController.Listener {
         return wrapped;
     }
 
+    /** Where the synced lyrics were last drawn, for click-to-seek; null when not clickable. */
+    private record LyricHit(int x, int y, int w, int h, int top, int trackId, WrappedLyrics wrapped) {}
+
+    private LyricHit lyricHit;
+
+    /** Click on a synced lyric: jump to the start of the line that owns this wrapped row. */
+    private void seekToLyricRow(int row) {
+        LyricHit hit = lyricHit;
+        Track t = ctl.current();
+        if (hit == null || t == null || t.id() != hit.trackId()) return;
+        if (row < 0 || row >= hit.wrapped().rows().size()) return; // blank space above/below the text
+        Lyrics ly = library.lyrics(t.id());
+        if (!ly.synced()) return;
+        int line = hit.wrapped().lineOfRow()[row];
+        // +10 ms so rounding in the player cannot land just before the line and highlight the previous one
+        ctl.seekAbsolute(ly.lines().get(line).timeMs() / 1000.0 + 0.01);
+    }
+
     private void drawLyrics(Canvas cv, Track t, int x, int y, int w, int h) {
+        lyricHit = null;
         Lyrics ly = t == null ? Lyrics.EMPTY : library.lyrics(t.id());
         if (ly.isEmpty()) {
             if (t != null) cv.text(x + Math.max(0, (w - 9) / 2), y + h / 2, "no lyrics", w, Theme.FAINT, Theme.PANEL);
@@ -1073,6 +1098,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
             int start = wl.firstRow()[line];
             int end = line + 1 < wl.firstRow().length ? wl.firstRow()[line + 1] : total;
             top = start + (end - start) / 2 - h / 2;
+            lyricHit = new LyricHit(x, y, w, h, top, t.id(), wl);
         } else if (total <= h) {
             top = -(h - total) / 2; // short text: centre it
         } else {
@@ -1174,7 +1200,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Album art", settings.get(Settings.ART_MODE, "auto") + artDetail()},
                 {"Visualizer", settings.get(Settings.VISUALIZER, "cava")
                         + (LibraryLoader.onPath("cava") ? "" : "  (cava not installed)")},
-                {"Seek bar", settings.get(Settings.SEEKBAR, "wave")},
+                {"Seek bar", Waveform.style(settings.get(Settings.SEEKBAR, "wave"))},
                 {"Theme", "cover".equals(settings.get(Settings.THEME, "cover"))
                         ? "cover  (" + Theme.current().description() + ")"
                         : "static  (" + Theme.fallback().description() + ")"},

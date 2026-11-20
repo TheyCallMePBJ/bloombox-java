@@ -8,14 +8,18 @@ import com.googlecode.lanterna.TextColor;
  *   <li>{@code wave} (default): a fine mirrored waveform drawn with braille dots: each cell
  *       holds 2 sample columns × 4 dot rows; over two rows that gives 4 dots above and 4 below
  *       a centre line, which stays visible through silence.</li>
- *   <li>{@code bars}: solid mirrored block glyphs (heavier look).</li>
  *   <li>{@code line}: a solid progress bar centred in the two rows, with a taller playhead.</li>
  * </ul>
  */
 final class Waveform {
     private Waveform() {}
 
-    static final String[] STYLES = {"wave", "bars", "line"};
+    static final String[] STYLES = {"wave", "line"};
+
+    /** A known style name; anything else (e.g. the removed "bars" in an old config) → "wave". */
+    static String style(String s) {
+        return java.util.Arrays.asList(STYLES).contains(s) ? s : "wave";
+    }
 
     private static final char[] LOWER = {' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'};
     /** Braille dot bits for (column, row): rows 0..3 top to bottom. */
@@ -23,8 +27,7 @@ final class Waveform {
 
     static void draw(Canvas cv, float[] env, int x, int y, int w, int h, double played, boolean active, String style) {
         if (w <= 0) return;
-        switch (style == null ? "wave" : style) {
-            case "bars" -> bars(cv, env, x, y, w, h, played, active);
+        switch (style(style)) {
             case "line" -> line(cv, x, y, w, h, played, active);
             default -> braille(cv, env, x, y, w, h, played, active);
         }
@@ -78,17 +81,6 @@ final class Waveform {
             } else {
                 cv.ch(x + c, y, (char) (0x2800 + (top | bottom)), col, Theme.BAR);
             }
-        }
-    }
-
-    private static void bars(Canvas cv, float[] env, int x, int y, int w, int h, double played, boolean active) {
-        double[] v = resample(env, w);
-        int head = (int) Math.round(played * (w - 1));
-        for (int c = 0; c < w; c++) {
-            int level = env == null ? 1 : Math.max(1, (int) Math.round(v[c] * 8));
-            TextColor col = colour(c, head, active);
-            cv.ch(x + c, y, LOWER[level], col, Theme.BAR);
-            if (h > 1) cv.ch(x + c, y + 1, LOWER[8 - level], Theme.BAR, col);
         }
     }
 

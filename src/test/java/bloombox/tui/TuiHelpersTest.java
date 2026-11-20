@@ -215,4 +215,12 @@ class TuiHelpersTest {
         assertTrue(acc[0] >= 79);
         assertNotEquals(Theme.Scheme.DEFAULT.accent(), s.accent());
     }
+
+    @Test
+    void seekBarStyleFallsBackForRemovedOrUnknownNames() {
+        assertEquals("wave", Waveform.style("bars"), "removed style in an old config");
+        assertEquals("wave", Waveform.style(null));
+        assertEquals("line", Waveform.style("line"));
+        assertArrayEquals(new String[]{"wave", "line"}, Waveform.STYLES);
+    }
 }
