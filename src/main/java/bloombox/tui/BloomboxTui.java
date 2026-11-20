@@ -60,8 +60,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
     private PlaybackController ctl;
     private MprisService mpris;
     private final ArtService art;
-    private final WaveformService waveforms = new WaveformService(this::markDirty);
-    private CavaVisualizer cava;
+    private final TrackAnalysis analysis = new TrackAnalysis(this::markDirty);
+    private final SpectrumVisualizer spectrum = new SpectrumVisualizer();
     private KittyImages kitty;
 
     // ---- data
@@ -133,7 +133,6 @@ public final class BloomboxTui implements PlaybackController.Listener {
             screen.startScreen();
             screen.setCursorPosition(null);
             kitty = KittyImages.detect(settings.get(Settings.ART_MODE, "auto"));
-            startVisualizer();
             if (settings.musicDir().isPresent()) {
                 startLoad(settings.musicDir().get(), false);
             } else {
@@ -157,12 +156,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
             settings.setVolume((int) Math.round(mpv.volume()));
             settings.save();
         } catch (Exception ignored) { }
-        if (cava != null) cava.close();
         if (kitty != null) kitty.close();
         try { if (screen != null) screen.stopScreen(); } catch (Exception ignored) { }
         if (mpris != null) mpris.close();
         if (mpv != null) mpv.close();
-        waveforms.close();
+        analysis.close();
         art.close();
     }
 
@@ -183,8 +181,10 @@ public final class BloomboxTui implements PlaybackController.Listener {
             boolean full = resized != null;
             long now = System.currentTimeMillis();
             boolean fading = updateTheme(now);
-            boolean animate = ctl.status() == PlaybackController.Status.PLAYING || scanProgress != null;
-            if (full || dirty || fading || (animate && now - lastFrame >= (cava != null && cava.isRunning() ? 33 : 100))) {
+            boolean viz = visualizerOn();
+            boolean animate = ctl.status() == PlaybackController.Status.PLAYING || scanProgress != null
+                    || (viz && !spectrum.settled());
+            if (full || dirty || fading || (animate && now - lastFrame >= (viz ? 33 : 100))) {
                 dirty = false;
                 render();
                 screen.refresh(full ? Screen.RefreshType.COMPLETE : Screen.RefreshType.DELTA);
@@ -599,7 +599,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
     // ---- settings overlay
 
     private static final String[] ART_MODES = {"auto", "kitty", "blocks", "off"};
-    private static final String[] VIZ_MODES = {"cava", "off"};
+    private static final String[] VIZ_MODES = {"spectrum", "off"};
     private static final int SETTINGS_ROWS = 9;
     private static final String[] RG_MODES = {"off", "track", "album"};
 
@@ -660,9 +660,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 kitty = KittyImages.detect(settings.get(Settings.ART_MODE, "auto"));
             }
             case 2 -> {
-                settings.set(Settings.VISUALIZER, cycle(VIZ_MODES, settings.get(Settings.VISUALIZER, "cava"), dir));
+                settings.set(Settings.VISUALIZER, cycle(VIZ_MODES, visualizerMode(), dir));
                 saveSettings();
-                startVisualizer();
             }
             case 3 -> {
                 settings.set(Settings.SEEKBAR, cycle(Waveform.STYLES, Waveform.style(settings.get(Settings.SEEKBAR, "wave")), dir));
@@ -712,24 +711,26 @@ public final class BloomboxTui implements PlaybackController.Listener {
         }
     }
 
-    private void startVisualizer() {
-        if (cava != null) {
-            cava.close();
-            cava = null;
-        }
-        if (!"cava".equals(settings.get(Settings.VISUALIZER, "cava"))) return;
-        if (!LibraryLoader.onPath("cava")) return;
-        cava = new CavaVisualizer(Settings.cacheHome(), this::markDirty);
-        cava.start();
+    /** "spectrum" or "off"; configs from before the cava replacement say "cava", which means on. */
+    private String visualizerMode() {
+        return "off".equals(settings.get(Settings.VISUALIZER, "spectrum")) ? "off" : "spectrum";
     }
+
+    private boolean visualizerOn() {
+        return "spectrum".equals(visualizerMode()) && FFMPEG;
+    }
+
+    private static final boolean FFMPEG = LibraryLoader.onPath("ffmpeg");
 
     // =========================================================== player events
 
     @Override
     public void onTrackChanged(Track track) {
         if (track != null) {
-            waveforms.request(track.path());
+            analysis.request(track.path());
             art.request(track);
+            Track next = ctl.upNext(); // analyse ahead so the bars are ready when it starts
+            if (next != null) analysis.request(next.path());
         }
         dirty = true;
     }
@@ -1032,7 +1033,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         }
         y += 4;
 
-        int vizH = cava != null && h - (y - y0) >= 10 ? 4 : 0;
+        int vizH = visualizerOn() && h - (y - y0) >= 10 ? 4 : 0;
         if (vizH > 0) {
             drawVisualizer(cv, x0 + 2, y, inner, vizH);
             y += vizH + 1;
@@ -1062,8 +1063,10 @@ public final class BloomboxTui implements PlaybackController.Listener {
     }
 
     private void drawVisualizer(Canvas cv, int x, int y, int w, int h) {
-        int[] bars = cava.bars();
-        Visualizer.draw(cv, bars, x, y, w, h, ctl.status() == PlaybackController.Status.PLAYING);
+        Track t = ctl.current();
+        boolean playing = ctl.status() == PlaybackController.Status.PLAYING;
+        int[] bars = spectrum.update(t == null ? null : analysis.spectrum(t.path()), ctl.position(), playing, System.nanoTime());
+        Visualizer.draw(cv, bars, x, y, w, h, playing);
     }
 
     /** Lyric lines word-wrapped to the pane width; cached per (library, track, width). */
@@ -1156,7 +1159,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         Track t = ctl.current();
         double pos = ctl.position(), dur = ctl.duration();
         double frac = dur > 0 ? Math.max(0, Math.min(1, pos / dur)) : 0;
-        float[] peaks = t == null ? null : waveforms.peaks(t.path());
+        float[] peaks = t == null ? null : analysis.peaks(t.path());
         Waveform.draw(cv, peaks, 1, y, w - 2, 2, frac, t != null, settings.get(Settings.SEEKBAR, "wave"));
 
         int sy = y + 2;
@@ -1229,8 +1232,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         String[][] rows = {
                 {"Music folder", settingsEditing ? null : dir},
                 {"Album art", settings.get(Settings.ART_MODE, "auto") + artDetail()},
-                {"Visualizer", settings.get(Settings.VISUALIZER, "cava")
-                        + (LibraryLoader.onPath("cava") ? "" : "  (cava not installed)")},
+                {"Visualizer", visualizerMode() + (FFMPEG ? "" : "  (needs ffmpeg)")},
                 {"Seek bar", Waveform.style(settings.get(Settings.SEEKBAR, "wave"))},
                 {"Theme", "cover".equals(settings.get(Settings.THEME, "cover"))
                         ? "cover  (" + Theme.current().description() + ")"

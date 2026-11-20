@@ -140,6 +140,19 @@ public final class PlayQueue {
         return current();
     }
 
+    /**
+     * The track that will play after the current one ends naturally, without moving the
+     * cursor; -1 if playback will stop or the next pick isn't known yet (a shuffled queue
+     * that reshuffles when it wraps).
+     */
+    public int peekNext() {
+        if (cursor < 0) return -1;
+        if (repeat == Repeat.ONE) return current();
+        if (cursor + 1 < order.length) return tracks.get(order[cursor + 1]);
+        if (repeat == Repeat.ALL && !(shuffle && order.length > 2)) return tracks.get(order[0]);
+        return -1;
+    }
+
     /** Steps back; at the start, wraps only when repeat is on. Returns the new current id. */
     public int previous() {
         if (cursor < 0) return -1;

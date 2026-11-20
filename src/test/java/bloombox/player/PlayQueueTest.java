@@ -128,4 +128,25 @@ class PlayQueueTest {
         assertEquals(4, q.currentPosition());
         assertThrows(IndexOutOfBoundsException.class, () -> q.jumpTo(10));
     }
+
+    @Test
+    void peekNextPredictsTheNaturalNextTrackWithoutMoving() {
+        PlayQueue q = new PlayQueue(new java.util.Random(1));
+        assertEquals(-1, q.peekNext(), "empty queue");
+        q.set(java.util.List.of(10, 11, 12), 0);
+        assertEquals(11, q.peekNext());
+        assertEquals(10, q.current(), "cursor unchanged");
+        q.next(false);
+        q.next(false);
+        assertEquals(-1, q.peekNext(), "end of queue, repeat off");
+        q.setRepeat(PlayQueue.Repeat.ALL);
+        assertEquals(10, q.peekNext(), "wraps with repeat all");
+        q.setRepeat(PlayQueue.Repeat.ONE);
+        assertEquals(12, q.peekNext(), "repeat one replays the current track");
+        q.setRepeat(PlayQueue.Repeat.OFF);
+        q.setShuffle(true);
+        q.jumpTo(0);
+        int predicted = q.peekNext();
+        if (predicted >= 0) assertEquals(predicted, q.next(false), "prediction matches what plays");
+    }
 }

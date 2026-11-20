@@ -86,6 +86,11 @@ public final class PlaybackController implements MpvPlayer.Listener {
     public synchronized List<Integer> queueTracks() { return queue.tracks(); }
     public synchronized List<Integer> queuePlayOrder() { return queue.playOrder(); }
     public synchronized int queuePosition() { return queue.currentPosition(); }
+    /** The track queued to play next, or null (see {@link PlayQueue#peekNext()}). */
+    public synchronized Track upNext() {
+        int id = queue.peekNext();
+        return id < 0 || id >= library.size() ? null : library.track(id);
+    }
     public Library library() { return library; }
 
     /**

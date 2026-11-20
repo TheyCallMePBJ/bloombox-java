@@ -21,7 +21,7 @@ final class Visualizer {
                 boolean gap = w >= n * 2 && ((long) (c + 1) * n / w) != ((long) c * n / w) && c % 2 == 1;
                 if (gap) v = 0;
             }
-            int fill = (int) Math.round(v / (double) CavaVisualizer.MAX * levels);
+            int fill = (int) Math.round(v / (double) SpectrumVisualizer.MAX * levels);
             for (int r = 0; r < h; r++) {
                 int rowFromBottom = h - 1 - r;
                 int cellFill = Math.max(0, Math.min(8, fill - rowFromBottom * 8));

@@ -77,21 +77,13 @@ class TuiHelpersTest {
     void waveformEnvelopeIsNormalisedAndBucketed() {
         short[] s = new short[8000];
         for (int i = 0; i < s.length; i++) s[i] = (short) (i < 4000 ? 1000 : 8000);
-        float[] env = WaveformService.envelope(s, s.length);
-        assertEquals(WaveformService.BUCKETS, env.length);
+        float[] env = TrackAnalysis.envelope(s, s.length);
+        assertEquals(TrackAnalysis.BUCKETS, env.length);
         assertEquals(1.0f, env[env.length - 1], 1e-6);
         assertTrue(env[0] < env[env.length - 1]);
         for (float v : env) assertTrue(v >= 0 && v <= 1);
-        assertEquals(3, WaveformService.envelope(new short[]{0, 0, 0}, 3).length, "fewer samples than buckets");
-        for (float v : WaveformService.envelope(new short[10], 10)) assertEquals(0f, v, "silence stays flat");
-    }
-
-    @Test
-    void cavaFrameParsing() {
-        assertArrayEquals(new int[]{0, 500, 1000}, CavaVisualizer.parse("0;500;1000;"));
-        assertArrayEquals(new int[]{1000, 0}, CavaVisualizer.parse("4000;-3;"), "values are clamped");
-        assertNull(CavaVisualizer.parse(""));
-        assertNull(CavaVisualizer.parse("1;x;3;"));
+        assertEquals(3, TrackAnalysis.envelope(new short[]{0, 0, 0}, 3).length, "fewer samples than buckets");
+        for (float v : TrackAnalysis.envelope(new short[10], 10)) assertEquals(0f, v, "silence stays flat");
     }
 
     @Test
