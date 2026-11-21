@@ -124,6 +124,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         // before Lanterna owns the terminal: ask it for its colour palette (fallback accent)
         TerminalPalette.Result pal = TerminalPalette.detect();
         if (!pal.colours().isEmpty()) Theme.setFallback(Theme.Scheme.fromTerminal(pal.colours(), pal.source()));
+        applyBackground();
         Utf8UnixTerminal terminal = new Utf8UnixTerminal(System.in, System.out, UnixLikeTerminal.CtrlCBehaviour.TRAP);
         terminal.setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE);
         screen = new TerminalScreen(terminal);
@@ -600,7 +601,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private static final String[] ART_MODES = {"auto", "kitty", "blocks", "off"};
     private static final String[] VIZ_MODES = {"spectrum", "off"};
-    private static final int SETTINGS_ROWS = 9;
+    private static final int SETTINGS_ROWS = 10;
+    private static final String[] BACKGROUND_MODES = {"theme", "terminal"};
     private static final String[] RG_MODES = {"off", "track", "album"};
 
     private void openSettings() {
@@ -672,24 +674,38 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 saveSettings();
             }
             case 5 -> {
+                settings.set(Settings.BACKGROUND, cycle(BACKGROUND_MODES, backgroundMode(), dir));
+                saveSettings();
+                applyBackground();
+            }
+            case 6 -> {
                 ReplayGain rg = settings.replayGain();
                 ReplayGain next = rg.withMode(ReplayGain.Mode.parse(cycle(RG_MODES, rg.mode().label(), dir)));
                 applyReplayGain(next);
             }
-            case 6 -> { // pre-amp: ←/→ step 1 dB (Enter/Space = +1), clamped to ±12
+            case 7 -> { // pre-amp: ←/→ step 1 dB (Enter/Space = +1), clamped to ±12
                 ReplayGain rg = settings.replayGain();
                 applyReplayGain(rg.withPreamp(Math.rint(rg.preampDb()) + dir));
             }
-            case 7 -> {
+            case 8 -> {
                 settings.set(Settings.LYRIC_JUMP, lyricJumpEnabled() ? "off" : "on");
                 saveSettings();
             }
-            case 8 -> settings.musicDir().ifPresentOrElse(d -> {
+            case 9 -> settings.musicDir().ifPresentOrElse(d -> {
                 startLoad(d, true);
                 overlay = Overlay.NONE;
             }, () -> flash("Set a music folder first", Theme.WARN));
             default -> { }
         }
+    }
+
+    private String backgroundMode() {
+        return "terminal".equals(settings.get(Settings.BACKGROUND, "theme")) ? "terminal" : "theme";
+    }
+
+    private void applyBackground() {
+        Canvas.transparentBackground = "terminal".equals(backgroundMode());
+        dirty = true;
     }
 
     private void applyReplayGain(ReplayGain rg) {
@@ -1207,7 +1223,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Tab  1  2", "switch Library / Queue"},
                 {"l", "locate the playing track"},
                 {"F2  i", "algorithm panel (trie / Bloom / KMP stats)"},
-                {"o  F10", "settings (music folder, art, visualizer, theme, ReplayGain)"},
+                {"o  F10", "settings (music folder, art, visualizer, theme, background, ReplayGain)"},
                 {"F5", "rescan the music folder (start-up uses the saved library)"},
                 {"q  Ctrl+C", "quit"},
                 {"", ""},
@@ -1237,6 +1253,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"Theme", "cover".equals(settings.get(Settings.THEME, "cover"))
                         ? "cover  (" + Theme.current().description() + ")"
                         : "static  (" + Theme.fallback().description() + ")"},
+                {"Background", "terminal".equals(backgroundMode())
+                        ? "terminal  (transparency set by your terminal's opacity)" : "theme  (solid, from the theme)"},
                 {"ReplayGain", replayGainDetail(settings.replayGain())},
                 {"Pre-amp", ReplayGain.formatDb(settings.replayGain().preampDb())
                         + (settings.replayGain().enabled() ? "  (←/→ to adjust, ±12 dB)" : "  (ReplayGain is off)")},
@@ -1259,8 +1277,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 cv.ch(vx + Math.min(vw - 1, Canvas.width(visible)), y, ' ', Theme.BG, Theme.ACCENT);
                 if (shown < 0) return;
             } else {
-                boolean inactive = i == 6 && !settings.replayGain().enabled();
-                cv.text(vx, y, rows[i][1], vw, inactive ? Theme.FAINT : i >= 1 && i <= 7 ? Theme.ACCENT2 : Theme.DIM, bg);
+                boolean inactive = i == 7 && !settings.replayGain().enabled();
+                cv.text(vx, y, rows[i][1], vw, inactive ? Theme.FAINT : i >= 1 && i <= 8 ? Theme.ACCENT2 : Theme.DIM, bg);
             }
         }
         String hint = settingsEditing ? "Enter save & scan · Esc cancel · Ctrl+U clear"

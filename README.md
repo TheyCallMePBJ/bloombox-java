@@ -25,6 +25,8 @@ reproducible from a fixed seed.
 - **Spectrum visualizer** that follows only bloombox's own playback: an FFT of the
   playing track, in sync with the player, rather than a capture of system audio.
 - **Waveform seek bar:** click anywhere on it to seek.
+- **Transparent background** (optional): set *Background* to `terminal` in the settings so
+  your terminal's own opacity and blur show through.
 - **ReplayGain** (off / track / album) with a −12 to +12 dB pre-amp.
 - **MPRIS:** media keys, `playerctl` and desktop widgets work.
 - **Queue** with shuffle (Fisher–Yates) and repeat (off / all / one).

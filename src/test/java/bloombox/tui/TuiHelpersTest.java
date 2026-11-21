@@ -215,4 +215,23 @@ class TuiHelpersTest {
         assertEquals("line", Waveform.style("line"));
         assertArrayEquals(new String[]{"wave", "line"}, Waveform.STYLES);
     }
+
+    @Test
+    void transparentBackgroundOnlyReplacesPlainSurfaces() {
+        boolean before = Canvas.transparentBackground;
+        try {
+            Canvas.transparentBackground = false;
+            assertEquals(Theme.BG, Canvas.bg(Theme.BG), "theme mode: solid");
+            Canvas.transparentBackground = true;
+            assertEquals(com.googlecode.lanterna.TextColor.ANSI.DEFAULT, Canvas.bg(Theme.BG));
+            assertEquals(com.googlecode.lanterna.TextColor.ANSI.DEFAULT, Canvas.bg(Theme.PANEL));
+            assertEquals(com.googlecode.lanterna.TextColor.ANSI.DEFAULT, Canvas.bg(Theme.STRIPE));
+            assertEquals(Theme.SELECT, Canvas.bg(Theme.SELECT), "selection stays solid");
+            assertEquals(Theme.BAR, Canvas.bg(Theme.BAR), "top and bottom bars stay solid");
+            assertEquals(Theme.ACCENT, Canvas.bg(Theme.ACCENT));
+            assertNull(Canvas.bg(null));
+        } finally {
+            Canvas.transparentBackground = before;
+        }
+    }
 }

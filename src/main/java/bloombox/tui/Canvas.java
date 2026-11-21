@@ -14,6 +14,22 @@ final class Canvas {
     final TextGraphics g;
     final int width, height;
 
+    /**
+     * When true, the plain background surfaces (Theme BG, PANEL, STRIPE) are drawn with the
+     * terminal's default background instead, so the terminal's own opacity and blur show
+     * through. Highlights (selection, bars, accents) stay solid.
+     */
+    static volatile boolean transparentBackground;
+
+    /** The colour actually sent for background {@code c}. Package-private for tests. */
+    static TextColor bg(TextColor c) {
+        if (transparentBackground && c != null
+                && (c.equals(Theme.BG) || c.equals(Theme.PANEL) || c.equals(Theme.STRIPE))) {
+            return TextColor.ANSI.DEFAULT;
+        }
+        return c;
+    }
+
     Canvas(TextGraphics g, int width, int height) {
         this.g = g;
         this.width = width;
@@ -22,7 +38,7 @@ final class Canvas {
 
     void fill(int x, int y, int w, int h, TextColor bg) {
         if (w <= 0 || h <= 0) return;
-        g.setBackgroundColor(bg);
+        g.setBackgroundColor(bg(bg));
         g.fillRectangle(new TerminalPosition(x, y), new TerminalSize(w, h), ' ');
     }
 
@@ -31,7 +47,7 @@ final class Canvas {
         if (maxWidth <= 0 || s == null || s.isEmpty() || y < 0 || y >= height) return 0;
         String fitted = fit(s, maxWidth);
         g.setForegroundColor(fg);
-        g.setBackgroundColor(bg);
+        g.setBackgroundColor(bg(bg));
         g.clearModifiers();
         if (sgr.length > 0) g.enableModifiers(sgr);
         g.putString(x, y, fitted);
@@ -48,7 +64,7 @@ final class Canvas {
 
     void ch(int x, int y, char c, TextColor fg, TextColor bg) {
         if (x < 0 || y < 0 || x >= width || y >= height) return;
-        g.setCharacter(x, y, new TextCharacter(c, fg, bg));
+        g.setCharacter(x, y, new TextCharacter(c, fg, bg(bg)));
     }
 
     void hline(int x, int y, int w, char c, TextColor fg, TextColor bg) {
