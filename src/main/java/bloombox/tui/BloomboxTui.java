@@ -356,13 +356,40 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     // =========================================================== list model
 
+    // The Queue view shows the play order (shuffled when shuffle is on), cached by queue version.
+    private List<Integer> queueOrder = List.of();
+    private int queueOrderVersion = Integer.MIN_VALUE;
+    // last cursor/version the Queue view scrolled to, so it follows playback without fighting manual scrolling
+    private int followedCursor = Integer.MIN_VALUE, followedVersion = Integer.MIN_VALUE;
+
+    private List<Integer> queueOrder() {
+        int v = ctl.queueVersion();
+        if (v != queueOrderVersion) {
+            queueOrder = ctl.queuePlayOrder();
+            queueOrderVersion = v;
+        }
+        return queueOrder;
+    }
+
+    /** Keeps the playing track in view (two rows of history above it) after it or the order changes. */
+    private void followQueue(int rows) {
+        int cur = ctl.queuePlayIndex(), v = ctl.queueVersion();
+        if (cur == followedCursor && v == followedVersion) return;
+        followedCursor = cur;
+        followedVersion = v;
+        if (cur < 0) return;
+        queueList.selected = cur;
+        queueList.offset = Math.max(0, cur - 2);
+        queueList.clamp(rowCount(), rows);
+    }
+
     private int rowCount() {
-        if (tab == Tab.QUEUE) return ctl.queueTracks().size();
+        if (tab == Tab.QUEUE) return queueOrder().size();
         return results != null ? results.size() : library.size();
     }
 
     private Track rowTrack(int i) {
-        if (tab == Tab.QUEUE) return library.track(ctl.queueTracks().get(i));
+        if (tab == Tab.QUEUE) return library.track(queueOrder().get(i));
         return results != null ? results.get(i).track() : library.track(i);
     }
 
@@ -375,7 +402,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         if (n == 0) return;
         int sel = list().selected;
         if (tab == Tab.QUEUE) {
-            ctl.playQueuePosition(sel);
+            ctl.playQueueOrderIndex(sel);
             return;
         }
         List<Integer> ids = new ArrayList<>(n);
@@ -402,7 +429,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         Track cur = ctl.current();
         if (cur == null) return;
         if (tab == Tab.QUEUE) {
-            int p = ctl.queuePosition();
+            int p = ctl.queuePlayIndex();
             if (p >= 0) queueList.center(p, rowCount(), listRows);
             return;
         }
@@ -882,6 +909,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private void drawList(Canvas cv, int x0, int headerY, int w, int rows) {
         boolean searchMode = tab == Tab.LIBRARY && results != null;
+        if (tab == Tab.QUEUE) followQueue(rows);
         int n = rowCount();
         ListState ls = list();
         ls.clamp(n, rows);
@@ -912,7 +940,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         }
 
         Track playing = ctl.current();
-        int queuePos = ctl.queuePosition();
+        int queuePos = ctl.queuePlayIndex();
         for (int r = 0; r < rows; r++) {
             int i = ls.offset + r;
             int y = headerY + 1 + r;
@@ -925,13 +953,15 @@ public final class BloomboxTui implements PlaybackController.Listener {
                     : Theme.BG;
             cv.fill(x0, y, w, 1, bg);
             if (sel) cv.ch(x0, y, '▌', Theme.ACCENT, bg);
-            TextColor fg = isPlaying ? Theme.ACCENT : Theme.TEXT;
+            boolean played = tab == Tab.QUEUE && queuePos >= 0 && i < queuePos; // already played: dimmed
+            TextColor fg = isPlaying ? Theme.ACCENT : played ? Theme.FAINT : Theme.TEXT;
             if (isPlaying) cv.ch(x0 + 1, y, ctl.status() == PlaybackController.Status.PAUSED ? '‖' : '▶', Theme.ACCENT, bg);
 
             String num = tab == Tab.QUEUE ? String.valueOf(i + 1) : t.trackNo() > 0 ? String.valueOf(t.trackNo()) : "";
             cv.textRight(xNum + numW - 1, y, num, numW - 1, Theme.FAINT, bg);
             drawHighlighted(cv, xTitle, y, t.title(), titleW, fg, bg, searchMode, isPlaying);
-            drawHighlighted(cv, xArtist, y, t.artist(), artistW, isPlaying ? Theme.ACCENT : Theme.DIM, bg, searchMode, false);
+            drawHighlighted(cv, xArtist, y, t.artist(), artistW, isPlaying ? Theme.ACCENT : played ? Theme.FAINT : Theme.DIM, bg,
+                    searchMode, false);
             SearchResult sr = searchMode ? results.get(i) : null;
             if (sr != null && sr.lyricText() != null && !sr.matched(Field.ALBUM)) {
                 String when = sr.lyricTimeMs() >= 0 ? Canvas.time(sr.lyricTimeMs() / 1000.0) + " " : "";

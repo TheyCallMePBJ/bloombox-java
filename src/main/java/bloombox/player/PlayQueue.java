@@ -31,7 +31,8 @@ public final class PlayQueue {
     private final Random random;
     private final List<Integer> tracks = new ArrayList<>(); // queue in user order
     private int[] order = new int[0];  // play order: permutation of 0..n-1 (identity if not shuffled)
-    private int cursor = -1;           // index into order; -1 = nothing selected
+    private int cursor = -1;
+    private int version;           // index into order; -1 = nothing selected
     private boolean shuffle;
     private Repeat repeat = Repeat.OFF;
 
@@ -56,12 +57,14 @@ public final class PlayQueue {
         tracks.clear();
         tracks.addAll(trackIds);
         rebuildOrder(start);
+        version++;
     }
 
     public void clear() {
         tracks.clear();
         order = new int[0];
         cursor = -1;
+        version++;
     }
 
     /** Appends to the end of the queue (and of the play order). */
@@ -70,6 +73,7 @@ public final class PlayQueue {
         order = java.util.Arrays.copyOf(order, order.length + 1);
         order[order.length - 1] = tracks.size() - 1;
         if (cursor < 0) cursor = 0;
+        version++;
     }
 
     public int size() {
@@ -97,6 +101,23 @@ public final class PlayQueue {
     /** Currently selected track id, or -1. */
     public int current() {
         return cursor < 0 ? -1 : tracks.get(order[cursor]);
+    }
+
+    /** Index of the current track in the play order ({@link #playOrder()}), or -1. */
+    public int cursor() {
+        return cursor;
+    }
+
+    /** Selects the entry at {@code index} of the play order and returns its track id. */
+    public int jumpToOrderIndex(int index) {
+        if (index < 0 || index >= order.length) throw new IndexOutOfBoundsException();
+        cursor = index;
+        return current();
+    }
+
+    /** Changes whenever the contents or the play order change (not when the cursor moves). */
+    public int version() {
+        return version;
     }
 
     /** Position of the current track in user order, or -1. */
@@ -179,6 +200,7 @@ public final class PlayQueue {
         if (on == shuffle) return;
         shuffle = on;
         rebuildOrder(currentPosition());
+        version++;
     }
 
     public Repeat repeat() {
@@ -219,6 +241,7 @@ public final class PlayQueue {
     private void reshuffleAll() {
         for (int i = 0; i < order.length; i++) order[i] = i;
         fisherYates(order, random);
+        version++;
     }
 
     /** In-place uniform random permutation (Durstenfeld's Fisher–Yates). Package-private for tests. */

@@ -149,4 +149,45 @@ class PlayQueueTest {
         int predicted = q.peekNext();
         if (predicted >= 0) assertEquals(predicted, q.next(false), "prediction matches what plays");
     }
+
+    @Test
+    void cursorIndexesThePlayOrderWhichIsWhatTheQueueViewShows() {
+        PlayQueue q = new PlayQueue(new java.util.Random(3));
+        assertEquals(-1, q.cursor());
+        q.set(java.util.List.of(10, 11, 12, 13, 14), 2);
+        assertEquals(2, q.cursor());
+        assertEquals(12, (int) q.playOrder().get(q.cursor()));
+        q.setShuffle(true);
+        assertEquals(0, q.cursor(), "shuffle puts the playing track first");
+        assertEquals(12, (int) q.playOrder().get(0));
+        assertNotEquals(java.util.List.of(12, 10, 11, 13, 14), q.playOrder(), "order is shuffled (seeded)");
+        int third = q.playOrder().get(3);
+        assertEquals(third, q.jumpToOrderIndex(3));
+        assertEquals(third, q.current());
+        assertEquals(3, q.cursor());
+        assertThrows(IndexOutOfBoundsException.class, () -> q.jumpToOrderIndex(5));
+        assertThrows(IndexOutOfBoundsException.class, () -> q.jumpToOrderIndex(-1));
+    }
+
+    @Test
+    void versionChangesWithTheOrderButNotWithTheCursor() {
+        PlayQueue q = new PlayQueue(new java.util.Random(3));
+        int v0 = q.version();
+        q.set(java.util.List.of(1, 2, 3), 0);
+        int v1 = q.version();
+        assertNotEquals(v0, v1);
+        q.next(true);
+        q.jumpToOrderIndex(0);
+        assertEquals(v1, q.version(), "moving the cursor keeps the version");
+        q.setShuffle(true);
+        int v2 = q.version();
+        assertNotEquals(v1, v2);
+        q.setShuffle(true);
+        assertEquals(v2, q.version(), "no-op toggle");
+        q.append(4);
+        assertNotEquals(v2, q.version());
+        int v3 = q.version();
+        q.clear();
+        assertNotEquals(v3, q.version());
+    }
 }

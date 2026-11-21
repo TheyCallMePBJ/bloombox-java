@@ -86,6 +86,10 @@ public final class PlaybackController implements MpvPlayer.Listener {
     public synchronized List<Integer> queueTracks() { return queue.tracks(); }
     public synchronized List<Integer> queuePlayOrder() { return queue.playOrder(); }
     public synchronized int queuePosition() { return queue.currentPosition(); }
+    /** Index of the playing entry in {@link #queuePlayOrder()}, or -1. */
+    public synchronized int queuePlayIndex() { return queue.cursor(); }
+    /** Changes when the queue's contents or play order change (see {@link PlayQueue#version()}). */
+    public synchronized int queueVersion() { return queue.version(); }
     /** The track queued to play next, or null (see {@link PlayQueue#peekNext()}). */
     public synchronized Track upNext() {
         int id = queue.peekNext();
@@ -119,6 +123,12 @@ public final class PlaybackController implements MpvPlayer.Listener {
     /** Plays the queue entry at {@code position} (user order). */
     public synchronized void playQueuePosition(int position) {
         queue.jumpTo(position);
+        startCurrent(0);
+    }
+
+    /** Plays the entry at {@code index} of the play order (what the Queue view shows). */
+    public synchronized void playQueueOrderIndex(int index) {
+        queue.jumpToOrderIndex(index);
         startCurrent(0);
     }
 
