@@ -46,7 +46,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public final class BloomboxTui implements PlaybackController.Listener {
 
-    private enum Tab { LIBRARY, QUEUE }
+    private enum Tab { LIBRARY, QUEUE, NOW_PLAYING }
 
     private enum Overlay { NONE, HELP, SETTINGS }
 
@@ -93,7 +93,9 @@ public final class BloomboxTui implements PlaybackController.Listener {
     private final ConcurrentLinkedQueue<Runnable> uiQueue = new ConcurrentLinkedQueue<>();
 
     // ---- layout (computed each frame; used by mouse handling)
-    private int listTop, listRows, leftW, waveY, tabsLibX0, tabsLibX1, tabsQueueX0, tabsQueueX1;
+    private int listTop, listRows, leftW, waveY, tabsLibX0, tabsLibX1, tabsQueueX0, tabsQueueX1, tabsNowX0, tabsNowX1;
+    /** The Now Playing view has no list; list keys act on this inert state instead of the hidden lists. */
+    private final ListState noList = new ListState();
     private long lastClickAt;
     private int lastClickRow = -1;
 
@@ -385,6 +387,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
 
     private int rowCount() {
         if (tab == Tab.QUEUE) return queueOrder().size();
+        if (tab == Tab.NOW_PLAYING) return 0;
         return results != null ? results.size() : library.size();
     }
 
@@ -394,7 +397,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
     }
 
     private ListState list() {
-        return tab == Tab.QUEUE ? queueList : libList;
+        return switch (tab) {
+            case QUEUE -> queueList;
+            case NOW_PLAYING -> noList;
+            case LIBRARY -> libList;
+        };
     }
 
     private void playSelected() {
@@ -485,7 +492,8 @@ public final class BloomboxTui implements PlaybackController.Listener {
             case Enter -> playSelected();
             case ArrowLeft -> ctl.seekRelative(k.isShiftDown() ? -30 : -5);
             case ArrowRight -> ctl.seekRelative(k.isShiftDown() ? 30 : 5);
-            case Tab, ReverseTab -> tab = tab == Tab.LIBRARY ? Tab.QUEUE : Tab.LIBRARY;
+            case Tab -> tab = Tab.values()[(tab.ordinal() + 1) % Tab.values().length];
+            case ReverseTab -> tab = Tab.values()[(tab.ordinal() + Tab.values().length - 1) % Tab.values().length];
             case Escape -> {
                 if (results != null || !search.isEmpty()) {
                     search.clear();
@@ -529,6 +537,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
             case 'l' -> locatePlaying();
             case '1' -> tab = Tab.LIBRARY;
             case '2' -> tab = Tab.QUEUE;
+            case '3' -> tab = Tab.NOW_PLAYING;
             case '?' -> overlay = Overlay.HELP;
             case 'i' -> showAlgo = !showAlgo;
             case 'o' -> openSettings();
@@ -595,6 +604,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
         if (y == 0) {
             if (x >= tabsLibX0 && x < tabsLibX1) tab = Tab.LIBRARY;
             else if (x >= tabsQueueX0 && x < tabsQueueX1) tab = Tab.QUEUE;
+            else if (x >= tabsNowX0 && x < tabsNowX1) tab = Tab.NOW_PLAYING;
             return;
         }
         if (y == listTop - 2 && x < leftW) {
@@ -816,8 +826,14 @@ public final class BloomboxTui implements PlaybackController.Listener {
         int mainY = 1, bottomH = 3, mainH = h - 1 - bottomH;
 
         drawTopBar(cv, w);
-        drawLeft(cv, 0, mainY, leftW, mainH);
-        if (rightW > 0) drawRight(cv, leftW, mainY, rightW, mainH);
+        if (tab == Tab.NOW_PLAYING) {
+            leftW = 0;
+            listRows = 0;
+            drawNowPlaying(cv, 0, mainY, w, mainH);
+        } else {
+            drawLeft(cv, 0, mainY, leftW, mainH);
+            if (rightW > 0) drawRight(cv, leftW, mainY, rightW, mainH);
+        }
         drawBottom(cv, h - bottomH, w);
 
         if (overlay == Overlay.HELP) drawHelp(cv, w, h);
@@ -838,6 +854,11 @@ public final class BloomboxTui implements PlaybackController.Listener {
         x += cv.text(x, 0, q, 20, tab == Tab.QUEUE ? Theme.BG : Theme.DIM,
                 tab == Tab.QUEUE ? Theme.ACCENT : Theme.BAR, SGR.BOLD);
         tabsQueueX1 = x;
+        x += 1;
+        tabsNowX0 = x;
+        x += cv.text(x, 0, " Now Playing ", 20, tab == Tab.NOW_PLAYING ? Theme.BG : Theme.DIM,
+                tab == Tab.NOW_PLAYING ? Theme.ACCENT : Theme.BAR, SGR.BOLD);
+        tabsNowX1 = x;
 
         String right;
         TextColor rc;
@@ -1156,12 +1177,17 @@ public final class BloomboxTui implements PlaybackController.Listener {
         ctl.seekAbsolute(ly.lines().get(line).timeMs() / 1000.0 + 0.01);
     }
 
-    private void drawLyrics(Canvas cv, Track t, int x, int y, int w, int h) {
+    /** One drawn row of the active (current) synced lyric line. */
+    private record LyricRow(int x, int y, String text, int w) {}
+
+    /** Draws the lyrics; returns the rows of the current line (empty if none) so they can be redrawn on top. */
+    private List<LyricRow> drawLyrics(Canvas cv, Track t, int x, int y, int w, int h) {
         lyricHit = null;
+        List<LyricRow> activeRows = new ArrayList<>(2);
         Lyrics ly = t == null ? Lyrics.EMPTY : library.lyrics(t.id());
         if (ly.isEmpty()) {
             if (t != null) cv.text(x + Math.max(0, (w - 9) / 2), y + h / 2, "no lyrics", w, Theme.FAINT, Theme.PANEL);
-            return;
+            return activeRows;
         }
         WrappedLyrics wl = wrapLyrics(t, ly, w);
         int total = wl.rows().size();
@@ -1194,6 +1220,88 @@ public final class BloomboxTui implements PlaybackController.Listener {
             else fg = Theme.mix(Theme.DIM, Theme.FAINT, Math.min(1, Math.abs(line - Math.max(0, cur)) / 6.0));
             int tx = x + Math.max(0, (w - Canvas.width(text)) / 2);
             cv.text(tx, y + r, text, w, fg, Theme.PANEL, active ? new SGR[]{SGR.BOLD} : new SGR[0]);
+            if (active) activeRows.add(new LyricRow(tx, y + r, text, w));
+        }
+        return activeRows;
+    }
+
+    // ---- Now Playing view: big art · title block · lyrics, with the visualizer rising over the lower half
+
+    private void drawNowPlaying(Canvas cv, int x0, int y0, int w, int h) {
+        cv.fill(x0, y0, w, h, Theme.PANEL);
+        Track t = ctl.current();
+        int pad = 2, inner = w - 2 * pad;
+        int half = y0 + h / 2; // the visualizer never rises above this row
+
+        // left: the art, as large as fits (square in pixels = twice as wide as tall in cells)
+        int artH = Math.max(4, h - 2), artW = artH * 2;
+        int maxArtW = Math.max(8, inner * 42 / 100);
+        if (artW > maxArtW) {
+            artW = maxArtW;
+            artH = Math.max(4, artW / 2);
+        }
+        int artX = x0 + pad, artY = y0 + (h - artH) / 2;
+        drawArt(cv, t, artX, artY, artW, artH);
+
+        // right: lyrics, full height
+        int lyrW = Math.max(24, inner * 30 / 100);
+        int lyrX = x0 + w - pad - lyrW;
+        // centre: title block, between art and lyrics; if that column is too narrow it goes above the lyrics
+        int cx = artX + artW + 3, cw = lyrX - 3 - cx;
+        int lyrY = y0 + 1, lyrH = h - 2;
+        List<String[]> block = titleBlock(t, cw >= 16 ? cw : lyrW);
+        if (cw >= 16) {
+            // bottom of the block two rows above the visualizer's top, i.e. as near the middle as possible
+            int by = Math.max(y0 + 1, half - 2 - block.size());
+            drawTitleBlock(cv, block, cx, by, cw);
+        } else {
+            drawTitleBlock(cv, block, lyrX, lyrY, lyrW);
+            lyrY += block.size() + 1;
+            lyrH -= block.size() + 1;
+        }
+        List<LyricRow> current = lyrH >= 3 ? drawLyrics(cv, t, lyrX, lyrY, lyrW, lyrH) : List.of();
+
+        // visualizer: full width, from the bottom up to half the height, over the art and lyrics
+        if (visualizerOn()) {
+            int vizH = y0 + h - half;
+            boolean playing = ctl.status() == PlaybackController.Status.PLAYING;
+            int[] bars = spectrum.update(t == null ? null : analysis.spectrum(t.path()), ctl.position(), playing,
+                    System.nanoTime());
+            Visualizer.draw(cv, bars, x0 + 1, half, w - 2, vizH, playing, true);
+            // the current lyric line stays readable on top of the bars
+            for (LyricRow r : current) cv.text(r.x(), r.y(), r.text(), r.w(), Theme.ACCENT, Theme.PANEL, SGR.BOLD);
+        }
+    }
+
+    /** Title (wrapped to two rows), artist, album: rows of {text, role}. */
+    private static List<String[]> titleBlock(Track t, int w) {
+        List<String[]> rows = new ArrayList<>(4);
+        if (t == null) {
+            rows.add(new String[]{"Nothing playing", "dim"});
+            rows.add(new String[]{"Enter plays · / searches · F1 help", "faint"});
+            return rows;
+        }
+        List<String> title = Canvas.wrap(t.title(), Math.max(1, w));
+        for (int i = 0; i < Math.min(2, title.size()); i++) {
+            String part = title.get(i);
+            if (i == 1 && title.size() > 2) part = Canvas.fit(part + " " + title.get(2), w);
+            rows.add(new String[]{part, "title"});
+        }
+        rows.add(new String[]{t.artist().isEmpty() ? "Unknown artist" : t.artist(), "artist"});
+        if (!t.album().isEmpty()) rows.add(new String[]{t.album(), "album"});
+        return rows;
+    }
+
+    private void drawTitleBlock(Canvas cv, List<String[]> rows, int x, int y, int w) {
+        for (int i = 0; i < rows.size(); i++) {
+            String text = Canvas.fit(rows.get(i)[0], w);
+            int tx = x + Math.max(0, (w - Canvas.width(text)) / 2);
+            switch (rows.get(i)[1]) {
+                case "title" -> cv.text(tx, y + i, text, w, Theme.TEXT, Theme.PANEL, SGR.BOLD);
+                case "artist" -> cv.text(tx, y + i, text, w, Theme.ACCENT, Theme.PANEL);
+                case "faint" -> cv.text(tx, y + i, text, w, Theme.FAINT, Theme.PANEL);
+                default -> cv.text(tx, y + i, text, w, Theme.DIM, Theme.PANEL);
+            }
         }
     }
 
@@ -1250,7 +1358,7 @@ public final class BloomboxTui implements PlaybackController.Listener {
                 {"/", "search; Tab accepts completion; Esc clears"},
                 {"↑ ↓ j k PgUp PgDn g G", "move"},
                 {"a", "add selection to queue"},
-                {"Tab  1  2", "switch Library / Queue"},
+                {"Tab  1  2  3", "switch Library / Queue / Now Playing"},
                 {"l", "locate the playing track"},
                 {"F2  i", "algorithm panel (trie / Bloom / KMP stats)"},
                 {"o  F10", "settings (music folder, art, visualizer, theme, background, ReplayGain)"},

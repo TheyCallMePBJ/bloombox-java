@@ -24,6 +24,8 @@ reproducible from a fixed seed.
   and monochrome themes.
 - **Spectrum visualizer** that follows only bloombox's own playback: an FFT of the
   playing track, in sync with the player, rather than a capture of system audio.
+- **Now Playing view** (`3`): large cover art, title and artist, and lyrics, with the
+  visualizer rising over the lower half of the screen.
 - **Waveform seek bar:** click anywhere on it to seek.
 - **Transparent background** (optional): set *Background* to `terminal` in the settings so
   your terminal's own opacity and blur show through.
@@ -82,7 +84,7 @@ bloombox bench [--quick] [...]      run the benchmark suite
 | `+` `-` / mouse wheel | volume |
 | `s` `r` | shuffle · repeat |
 | `a` | add to queue |
-| `Tab` `1` `2` | Library / Queue |
+| `Tab` `1` `2` `3` | Library / Queue / Now Playing |
 | `l` | jump to the playing track |
 | `F2` `i` | algorithm panel: trie nodes visited, Bloom probes, KMP comparisons for the last search |
 | `o` `F10` | settings |
