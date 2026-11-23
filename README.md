@@ -4,6 +4,8 @@ A terminal music player for Linux, written in Java. Its search box finds tracks 
 artist, album **and lyrics** as you type, using tries, a Bloom filter and KMP string
 matching.
 
+![bloombox demo: a quoted lyric search narrows 311 tracks to one, the algorithm panel shows the Bloom filter skipping 98.9% of tracks before KMP confirms the match, the song plays from the matched line with the theme taken from its cover, then a second search switches to a monochrome cover](docs/demo.gif)
+
 bloombox is a project for *Advanced Algorithms* (CIA 3). Every data structure and
 algorithm the search depends on is implemented from scratch in `core/`, has unit tests,
 and is benchmarked against a simpler baseline. The [results](#benchmarks) are
